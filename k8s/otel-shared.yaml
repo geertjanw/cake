@@ -12,7 +12,7 @@ metadata:
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: "https://ingress.eu-west-1.aws.dash0.com:4317"
   OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
-  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=demo,service.namespace=cake-and-candles,service.version=0.1.0"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=demo,service.namespace=cake-and-candles,service.version=0.1.0"
   OTEL_LOGS_EXPORTER: "otlp"
   OTEL_METRICS_EXPORTER: "otlp"
   OTEL_TRACES_EXPORTER: "otlp"

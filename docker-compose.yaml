@@ -4,7 +4,7 @@ x-otel: &otel
   OTEL_EXPORTER_OTLP_ENDPOINT: ${DASH0_ENDPOINT:-https://ingress.eu-west-1.aws.dash0.com:4317}
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc
   OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer ${DASH0_AUTH_TOKEN},Dash0-Dataset=${DASH0_DATASET:-default}"
-  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=${DEPLOYMENT_ENV:-demo},service.namespace=cake-and-candles,service.version=0.1.0"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=${DEPLOYMENT_ENV:-demo},service.namespace=cake-and-candles,service.version=0.1.0"
   OTEL_LOGS_EXPORTER: otlp
   OTEL_METRICS_EXPORTER: otlp
   OTEL_TRACES_EXPORTER: otlp

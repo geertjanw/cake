@@ -117,36 +117,29 @@ DASH0_ENDPOINT=https://ingress.<your-region>.aws.dash0.com:4317
 
 ## Step 2: Run the app
 
-### Option A: Docker Compose (recommended)
+There are three ways to run the demo, and all three produce identical telemetry in Dash0.
+Pick based on how close to production you want to be. The recommended path is a local
+Kubernetes cluster, because it mirrors how the services usually run and sets up the Dash0
+Kubernetes route (Option A). If you'd rather not touch a cluster, Docker Compose is the
+simplest one-command option (Option B), and running on a plain JVM is handy when you're
+editing the code and want a fast rebuild loop (Option C).
 
-```bash
-docker compose up --build
-```
+### Option A: Local Kubernetes (kind or k3s) (recommended)
 
-The first build takes a few minutes: Maven compiles all three services and the Docker image
-downloads the OpenTelemetry Java agent. When you see all three services logging, it's ready.
+Use this path if you want to see the demo the way it usually runs in production (as pods in a
+cluster) and set up the Dash0 Kubernetes route.
 
-> **What is the OpenTelemetry Java agent?** It's a `.jar` attached to the JVM with
-> `-javaagent:opentelemetry-javaagent.jar` (see the `Dockerfile`). It rewrites bytecode at
-> startup to automatically create spans for HTTP servers and clients, JDBC queries, Spring
-> `@Scheduled` jobs, and more, **with no changes to your code**. This is *zero-code
-> instrumentation*, and it's the fastest way to get useful telemetry out of an existing app.
+Requires:
 
-### Option B: Locally without Docker
+| Technology | Why | Where to get it |
+|---|---|---|
+| A local Kubernetes cluster (**kind** or **k3s**), already running | Runs the services as pods | kind: [kind.sigs.k8s.io/docs/user/quick-start](https://kind.sigs.k8s.io/docs/user/quick-start/) · k3s: [docs.k3s.io/quick-start](https://docs.k3s.io/quick-start) |
+| `kubectl` | Apply manifests and talk to the cluster | [kubernetes.io/docs/tasks/tools](https://kubernetes.io/docs/tasks/tools/) |
+| Docker | Builds the images before loading them into the cluster | [docs.docker.com/get-started/get-docker](https://docs.docker.com/get-started/get-docker/) |
+| `curl` and `jq` *(jq optional)* | Send requests and pretty-print responses (or use the browser form) | [curl.se/windows](https://curl.se/windows/) · [jqlang.github.io/jq/download](https://jqlang.github.io/jq/download/) |
 
-Needs Java 21 and Maven. This downloads the agent, builds all three services, and starts them:
-
-```bash
-./scripts/run-local.sh
-```
-
-Each service logs to `<service>.log` in the repo root. Press `Ctrl-C` to stop everything.
-
-### Option C: Local Kubernetes (kind or k3s)
-
-**Requirement: a local Kubernetes cluster already running (kind or k3s)**, plus `kubectl`
-and `docker`. Use this path if you want to see the demo the way it usually runs in
-production (as pods in a cluster) and set up the Dash0 Kubernetes route.
+**This path assumes the cluster is already up.** Bring one up first, for example
+`kind create cluster` or a running k3s install.
 
 The manifests live in `k8s/`. There's no in-cluster registry, so you **build the images
 locally and load them into the cluster**.
@@ -222,6 +215,48 @@ later steps work unchanged.**
 > Step 1, and it's covered under *Sending through an OpenTelemetry Collector* below.
 
 To tear the demo down, run `kubectl delete namespace cake-and-candles`.
+
+### Option B: Docker Compose
+
+Requires:
+
+| Technology | Why | Where to get it |
+|---|---|---|
+| Docker Engine + Compose | Builds and runs all three services in containers | [docs.docker.com/get-started/get-docker](https://docs.docker.com/get-started/get-docker/) (Docker Desktop bundles Compose) |
+| `curl` | Send requests from the terminal (or use the browser form instead) | Preinstalled on macOS/Linux, or on Windows: [curl.se/windows](https://curl.se/windows/) |
+| `jq` *(optional)* | Pretty-print JSON responses in the examples | [jqlang.github.io/jq/download](https://jqlang.github.io/jq/download/) |
+
+```bash
+docker compose up --build
+```
+
+The first build takes a few minutes: Maven compiles all three services and the Docker image
+downloads the OpenTelemetry Java agent. When you see all three services logging, it's ready.
+
+> **What is the OpenTelemetry Java agent?** It's a `.jar` attached to the JVM with
+> `-javaagent:opentelemetry-javaagent.jar` (see the `Dockerfile`). It rewrites bytecode at
+> startup to automatically create spans for HTTP servers and clients, JDBC queries, Spring
+> `@Scheduled` jobs, and more, **with no changes to your code**. This is *zero-code
+> instrumentation*, and it's the fastest way to get useful telemetry out of an existing app.
+
+### Option C: Locally without Docker
+
+Requires:
+
+| Technology | Why | Where to get it |
+|---|---|---|
+| JDK 21 | Compiles and runs the services | [adoptium.net/temurin/releases](https://adoptium.net/temurin/releases/) (or `brew install temurin@21` / `sdk install java 21-tem`) |
+| Maven 3.9+ | Builds the three modules | [maven.apache.org/download](https://maven.apache.org/download.cgi) (or `brew install maven`) |
+| `curl` | Send requests from the terminal (or use the browser form instead) | Preinstalled on macOS/Linux, or on Windows: [curl.se/windows](https://curl.se/windows/) |
+| `jq` *(optional)* | Pretty-print JSON responses in the examples | [jqlang.github.io/jq/download](https://jqlang.github.io/jq/download/) |
+
+The script downloads the OpenTelemetry Java agent, builds all three services, and starts them:
+
+```bash
+./scripts/run-local.sh
+```
+
+Each service logs to `<service>.log` in the repo root. Press `Ctrl-C` to stop everything.
 
 ---
 
@@ -456,10 +491,35 @@ inline and commented so you can follow it.
 
 ### 3. Semantic conventions
 
-Where possible the demo follows OpenTelemetry
-[semantic conventions](https://opentelemetry.io/docs/specs/semconv/), the shared naming
-rules (like `service.namespace`, `deployment.environment`, and HTTP attributes) that let a
-backend like Dash0 understand your data automatically instead of you configuring every field.
+[Semantic conventions](https://opentelemetry.io/docs/specs/semconv/) are OpenTelemetry's
+shared naming rules. They only cover general technical concerns (HTTP, databases, RPC,
+messaging, resource identity, and runtime), which is what lets a backend like Dash0 understand
+that data automatically instead of you configuring every field. Here is exactly where this
+demo does and doesn't follow them.
+
+**Conformant, because a convention exists for it:**
+
+- **Resource identity:** [`service.name`](https://opentelemetry.io/docs/specs/semconv/attributes-registry/service/#service-name)
+  (set via `OTEL_SERVICE_NAME`), [`service.namespace`](https://opentelemetry.io/docs/specs/semconv/attributes-registry/service/#service-namespace),
+  and [`service.version`](https://opentelemetry.io/docs/specs/semconv/attributes-registry/service/#service-version).
+- **Everything the agent emits automatically:** HTTP server and client spans
+  ([`http.request.method`](https://opentelemetry.io/docs/specs/semconv/attributes-registry/http/#http-request-method),
+  [`url.path`](https://opentelemetry.io/docs/specs/semconv/attributes-registry/url/#url-path),
+  [`http.response.status_code`](https://opentelemetry.io/docs/specs/semconv/attributes-registry/http/#http-response-status-code),
+  and so on), JDBC and database spans ([`db.*`](https://opentelemetry.io/docs/specs/semconv/attributes-registry/db/)),
+  and JVM runtime metrics ([`jvm.memory.*`, `jvm.gc.*`, `jvm.thread.*`](https://opentelemetry.io/docs/specs/semconv/runtime/jvm-metrics/)).
+  The agent implements these to spec, so you get conformant telemetry for
+  free.
+
+**Custom, because no convention covers it.** There is no semantic convention for a
+birthday-cake domain, so all of the *business* attributes and metrics are necessarily bespoke:
+`party.age`, `party.outcome`, `cake.flavor`, `cake.candles`, `invitation.status`,
+`invitation.recipient.domain`, `parties.planned`, `cakes.baked`, `oven.failures`,
+`bake.duration`, and the rest. They follow the convention *style* (dotted namespaces, low
+cardinality, and PII kept off spans, which is why only `invitation.recipient.domain` is
+recorded, never the full address) but they are not standardized names. A couple of the metric
+names (`cakes.baked`, `candles.lit`) also bend OpenTelemetry's metric-naming guidance, which
+prefers a `namespace.noun` shape over a pluralized past-tense verb.
 
 ---
 
@@ -499,7 +559,7 @@ All services expose `/actuator/health`.
 | `DASH0_AUTH_TOKEN` | (none) | Your Dash0 ingestion token (**required**) |
 | `DASH0_ENDPOINT` | `https://ingress.eu-west-1.aws.dash0.com:4317` | Dash0 OTLP/gRPC ingress |
 | `DASH0_DATASET` | `default` | Dash0 dataset to write to |
-| `DEPLOYMENT_ENV` | `demo` | Sets the `deployment.environment` resource attribute |
+| `DEPLOYMENT_ENV` | `demo` | Sets the `deployment.environment.name` resource attribute |
 | `bakery.oven.max-candles` (cake-service) | `80` | Candles above this cause an oven timeout |
 | `bakery.oven.millis-per-candle` (cake-service) | `25` | Bake time per candle |
 | `clients.cake.max-attempts` (party-service) | `3` | Retries on 503 |

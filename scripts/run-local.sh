@@ -19,7 +19,7 @@ mvn -q -B -DskipTests package
 export OTEL_EXPORTER_OTLP_ENDPOINT="$DASH0_ENDPOINT"
 export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer ${DASH0_AUTH_TOKEN},Dash0-Dataset=${DASH0_DATASET:-default}"
-export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=${DEPLOYMENT_ENV:-local},service.namespace=cake-and-candles,service.version=0.1.0"
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment.name=${DEPLOYMENT_ENV:-local},service.namespace=cake-and-candles,service.version=0.1.0"
 export OTEL_LOGS_EXPORTER=otlp OTEL_METRICS_EXPORTER=otlp OTEL_TRACES_EXPORTER=otlp
 export OTEL_METRIC_EXPORT_INTERVAL=15000
 export OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_EMIT_EXPERIMENTAL_TELEMETRY=true
