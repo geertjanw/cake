@@ -556,7 +556,7 @@ All services expose `/actuator/health`.
 
 ---
 
-## Configuration knobs
+## Configuration settings
 
 | Variable / property | Default | Effect |
 |---|---|---|
