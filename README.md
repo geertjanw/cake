@@ -1,4 +1,4 @@
-# 🎂 Cake & Candles: learn OpenTelemetry by running it
+# 🎂 Cake & Candles: Learn OpenTelemetry From Scratch
 
 This is a hands-on demo for learning **[OpenTelemetry](https://opentelemetry.io)** (OTel),
 the vendor-neutral standard for generating **traces, metrics, and logs** from your
