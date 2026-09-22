@@ -82,7 +82,7 @@ Keep these in mind, because they're the raw material for the guided exercises la
 > at any OTLP backend without code changes.
 
 1. Sign up at **[dash0.com](https://www.dash0.com)** (there's a free trial).
-2. In Dash0, open **Settings → Auth Tokens** and create an **ingestion token**. Copy it.
+2. In Dash0, open **Settings → Auth Tokens** and, in **Auto-generated auth token**, click **Show token** next to **Token**, and copy it.
 3. Open **Settings → Endpoints** and copy your **OTLP/gRPC endpoint**. It looks like
    `https://ingress.<region>.aws.dash0.com:4317`.
 
