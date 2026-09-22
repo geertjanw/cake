@@ -512,12 +512,14 @@ demo does and doesn't follow them.
   free.
 
 **Custom, because no convention covers it.** There is no semantic convention for a
-birthday-cake domain, so all of the *business* attributes and metrics are necessarily bespoke:
+birthday-cake domain, so all of the *business* attributes and metrics are necessarily custom:
 `party.age`, `party.outcome`, `cake.flavor`, `cake.candles`, `invitation.status`,
 `invitation.recipient.domain`, `parties.planned`, `cakes.baked`, `oven.failures`,
-`bake.duration`, and the rest. They follow the convention *style* (dotted namespaces, low
+`bake.duration`, and the rest. 
+- They follow the convention *style* (dotted namespaces, low
 cardinality, and PII kept off spans, which is why only `invitation.recipient.domain` is
-recorded, never the full address) but they are not standardized names. A couple of the metric
+recorded, never the full address) but they are not standardized names.
+- A couple of the metric
 names (`cakes.baked`, `candles.lit`) also bend OpenTelemetry's metric-naming guidance, which
 prefers a `namespace.noun` shape over a pluralized past-tense verb.
 
