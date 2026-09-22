@@ -7,7 +7,7 @@ software.
 Instead of reading about spans and attributes in the abstract, you'll run a
 small three-service Spring Boot application, send it a request, and watch that one request
 turn into a real distributed trace, with business context, custom metrics, correlated logs,
-and a few deliberate failures to investigate.
+and a few deliberate failures to investigate. (And then you'll send more!)
 
 To *see* the telemetry, you need somewhere to send it. This demo uses
 **[Dash0](https://www.dash0.com)**, the OpenTelemetry-native observability platform, as the
