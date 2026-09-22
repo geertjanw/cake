@@ -1,0 +1,44 @@
+# Runs all three services, each with the OpenTelemetry Java agent exporting
+# straight to Dash0. Copy .env.example to .env and fill in your token first.
+x-otel: &otel
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${DASH0_ENDPOINT:-https://ingress.eu-west-1.aws.dash0.com:4317}
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer ${DASH0_AUTH_TOKEN},Dash0-Dataset=${DASH0_DATASET:-default}"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=${DEPLOYMENT_ENV:-demo},service.namespace=cake-and-candles,service.version=0.1.0"
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRIC_EXPORT_INTERVAL: "15000"
+  # Send runtime metrics (JVM memory, GC, threads) too - nice on a dashboard.
+  OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_EMIT_EXPERIMENTAL_TELEMETRY: "true"
+
+services:
+  party-service:
+    build:
+      context: .
+      args: { MODULE: party-service }
+    ports: ["8080:8080"]
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: party-service
+      CAKE_SERVICE_URL: http://cake-service:8081
+      INVITATION_SERVICE_URL: http://invitation-service:8082
+    depends_on: [cake-service, invitation-service]
+
+  cake-service:
+    build:
+      context: .
+      args: { MODULE: cake-service }
+    ports: ["8081:8081"]
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: cake-service
+
+  invitation-service:
+    build:
+      context: .
+      args: { MODULE: invitation-service }
+    ports: ["8082:8082"]
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: invitation-service

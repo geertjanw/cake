@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: party-service
+
+server:
+  port: 8080
+
+clients:
+  cake:
+    url: ${CAKE_SERVICE_URL:http://localhost:8081}
+    max-attempts: 3
+  invitation:
+    url: ${INVITATION_SERVICE_URL:http://localhost:8082}
+
+jobs:
+  upcoming-birthdays:
+    rate: 60000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

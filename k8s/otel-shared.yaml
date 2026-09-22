@@ -1,0 +1,20 @@
+# Shared OpenTelemetry exporter config, injected into every service via envFrom.
+# This is the SAME set of variables used by docker-compose.yaml — the app code
+# never changes, only where telemetry is sent.
+#
+# Edit OTEL_EXPORTER_OTLP_ENDPOINT below to match your Dash0 region.
+# The auth token lives in a Secret (see the README), never in this ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-shared
+  namespace: cake-and-candles
+data:
+  OTEL_EXPORTER_OTLP_ENDPOINT: "https://ingress.eu-west-1.aws.dash0.com:4317"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=demo,service.namespace=cake-and-candles,service.version=0.1.0"
+  OTEL_LOGS_EXPORTER: "otlp"
+  OTEL_METRICS_EXPORTER: "otlp"
+  OTEL_TRACES_EXPORTER: "otlp"
+  OTEL_METRIC_EXPORT_INTERVAL: "15000"
+  OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_EMIT_EXPERIMENTAL_TELEMETRY: "true"

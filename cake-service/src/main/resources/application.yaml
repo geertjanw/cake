@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: cake-service
+  datasource:
+    url: jdbc:h2:mem:bakery;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+  h2:
+    console:
+      enabled: false
+
+server:
+  port: 8081
+
+bakery:
+  oven:
+    max-candles: 80      # anything above this makes the oven time out
+    millis-per-candle: 25
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

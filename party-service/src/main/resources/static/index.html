@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<!--
+  Optional convenience UI for the Cake & Candles OpenTelemetry demo.
+  Spring Boot serves this file at http://localhost:8080/ automatically.
+
+  It is a thin client over POST /parties: it does exactly what the curl command
+  in the README does. Every request you send from here becomes one distributed
+  trace in Dash0 - the form changes nothing about the telemetry.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>🎂 Cake &amp; Candles</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      max-width: 640px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5;
+    }
+    h1 { margin-bottom: 0.25rem; }
+    p.sub { margin-top: 0; opacity: 0.75; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input, select, textarea {
+      width: 100%; padding: 0.5rem; margin-top: 0.25rem; font: inherit;
+      border: 1px solid #8888; border-radius: 6px; background: transparent; color: inherit;
+    }
+    textarea { min-height: 5rem; resize: vertical; }
+    small { opacity: 0.7; font-weight: 400; }
+    button {
+      margin-top: 1.25rem; padding: 0.6rem 1.2rem; font: inherit; font-weight: 600;
+      border: 0; border-radius: 6px; background: #d6336c; color: #fff; cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #result { margin-top: 1.5rem; padding: 1rem; border-radius: 8px; border: 1px solid #8888; display: none; }
+    #result.show { display: block; }
+    .badge { display: inline-block; padding: 0.1rem 0.6rem; border-radius: 999px; font-size: 0.85rem; font-weight: 700; color: #fff; }
+    .PLANNED { background: #2f9e44; }
+    .PARTIAL { background: #f08c00; }
+    .FAILED  { background: #e03131; }
+    pre { overflow-x: auto; background: #8881; padding: 0.75rem; border-radius: 6px; }
+    .hint { font-size: 0.9rem; opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <h1>🎂 Cake &amp; Candles</h1>
+  <p class="sub">Throw a party, then find its trace in Dash0.</p>
+
+  <form id="party-form">
+    <label>Name
+      <input name="name" value="Ada" required>
+    </label>
+
+    <label>Birth date <small>(age = candles; 81+ trips the oven timeout)</small>
+      <input name="birthDate" type="date" value="1990-12-10" required>
+    </label>
+
+    <label>Flavor <small>(lemon starts with only 3 in stock)</small>
+      <select name="flavor">
+        <option>chocolate</option>
+        <option>vanilla</option>
+        <option>strawberry</option>
+        <option>lemon</option>
+      </select>
+    </label>
+
+    <label>Guests <small>(one e-mail per line or comma-separated; a bad address bounces just that invite)</small>
+      <textarea name="guests" required>grace@example.com
+linus@example.org</textarea>
+    </label>
+
+    <button type="submit">Throw the party</button>
+  </form>
+
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById('party-form');
+    const result = document.getElementById('result');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+
+      const data = new FormData(form);
+      const guests = data.get('guests')
+        .split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+
+      const body = {
+        name: data.get('name'),
+        birthDate: data.get('birthDate'),
+        flavor: data.get('flavor'),
+        guests,
+      };
+
+      try {
+        const res = await fetch('/parties', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const party = await res.json();
+        const status = party.status || (res.ok ? 'PLANNED' : 'FAILED');
+        result.className = 'show';
+        result.innerHTML = `
+          <div><span class="badge ${status}">${status}</span> &nbsp; HTTP ${res.status}</div>
+          <p class="hint">Now open <strong>Dash0 → Tracing</strong> and filter on
+            <code>service.namespace = cake-and-candles</code> to see this request's trace.</p>
+          <pre>${JSON.stringify(party, null, 2)}</pre>`;
+      } catch (err) {
+        result.className = 'show';
+        result.innerHTML = `<span class="badge FAILED">ERROR</span> ${err}`;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
