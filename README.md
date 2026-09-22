@@ -118,10 +118,13 @@ DASH0_ENDPOINT=https://ingress.<your-region>.aws.dash0.com:4317
 ## Step 2: Run the app
 
 There are three ways to run the demo, and all three produce identical telemetry in Dash0.
-Pick based on how close to production you want to be. The recommended path is a local
+Pick based on how close to production you want to be. 
+- The recommended path is a local
 Kubernetes cluster, because it mirrors how the services usually run and sets up the Dash0
-Kubernetes route (Option A). If you'd rather not touch a cluster, Docker Compose is the
-simplest one-command option (Option B), and running on a plain JVM is handy when you're
+Kubernetes route (Option A).
+- If you'd rather not touch a cluster, Docker Compose is the
+simplest one-command option (Option B).
+- Running on a plain JVM is handy when you're
 editing the code and want a fast rebuild loop (Option C).
 
 ### Option A: Local Kubernetes (kind or k3s) (recommended)
