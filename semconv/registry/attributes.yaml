@@ -1,0 +1,169 @@
+# Attributes the demo sets by hand. Every name lives under the `cake` root namespace, so
+# one filter in a backend separates "our" telemetry from everything the agent contributes.
+#
+# Cardinality is the rule that shapes this file: an attribute that can take an unbounded
+# number of values is fine on a span and ruinous on a metric, so anything used as a metric
+# attribute is either a small enum or a value validated before it is recorded.
+groups:
+  - id: registry.cake
+    type: attribute_group
+    display_name: Cake attributes
+    brief: The cake itself.
+    attributes:
+      - id: cake.flavor
+        type: string
+        stability: development
+        brief: The flavor of cake that was ordered.
+        note: >
+          Bounded by the `bakery.cake.flavors` setting: a flavor outside the served set is
+          rejected with HTTP 400 before any span or metric records it. Without that guard
+          this attribute would be caller-controlled, and on a metric that means a caller
+          can mint time series at will.
+        examples: [chocolate, vanilla, strawberry, lemon]
+
+      - id: cake.candles
+        type: int
+        stability: development
+        brief: Number of candles on the cake, which equals the celebrant's age.
+        examples: [36, 90]
+
+      - id: cake.id
+        type: string
+        stability: development
+        brief: Identifier of a cake that was successfully baked.
+        note: Unique per cake, so it belongs on spans only - never on a metric.
+        examples: ["35bab4ef-cd49-4ebf-95bf-3bcea5915d92"]
+
+      - id: cake.inventory.remaining
+        type: int
+        stability: development
+        brief: Units of a flavor left in the inventory after a reservation.
+        examples: [24, 0]
+
+      - id: cake.order.attempts
+        type: int
+        stability: development
+        brief: How many times the cake was ordered before the outcome was decided.
+        note: >
+          Greater than one means the bakery answered 503 and the order was retried. Without
+          it, the only evidence of a retry is counting sibling HTTP client spans by hand.
+        examples: [1, 3]
+
+  - id: registry.cake.party
+    type: attribute_group
+    display_name: Party attributes
+    brief: The party the cake is for.
+    attributes:
+      - id: cake.party.id
+        type: string
+        stability: development
+        brief: Identifier of the party being planned.
+        note: Unique per request, so it belongs on spans only - never on a metric.
+        examples: ["ec027bbc-9723-43a3-be9d-99d75f4ae1a8"]
+
+      - id: cake.party.age
+        type: int
+        stability: development
+        brief: Age being celebrated, derived from the birth date.
+        examples: [36, 90]
+
+      - id: cake.party.guest_count
+        type: int
+        stability: development
+        brief: Number of guests on the invitation list.
+        examples: [2, 40]
+
+      - id: cake.party.outcome
+        type:
+          members:
+            - id: planned
+              value: planned
+              stability: development
+              brief: Cake ordered and every invitation accepted.
+            - id: partial
+              value: partial
+              stability: development
+              brief: Cake ordered, but at least one guest could not be invited.
+            - id: failed
+              value: failed
+              stability: development
+              brief: No cake, so no party.
+        stability: development
+        brief: How the party turned out.
+        note: >
+          An enum because it is the primary grouping of `cake.parties.planned`: the set of
+          time series that metric can produce has to be decided here, not by a call site.
+
+  - id: registry.cake.invitations
+    type: attribute_group
+    display_name: Invitation attributes
+    brief: Sending the invitations out.
+    attributes:
+      - id: cake.invitations.dispatch
+        type:
+          members:
+            - id: delivered
+              value: delivered
+              stability: development
+              brief: invitation-service accepted every address.
+            - id: partial
+              value: partial
+              stability: development
+              brief: invitation-service answered; some addresses bounced.
+            - id: unavailable
+              value: unavailable
+              stability: development
+              brief: invitation-service could not be reached. Nobody was invited.
+        stability: development
+        brief: How the invitation round went, as opposed to how many letters landed.
+        note: >
+          Separate from `cake.party.outcome` on purpose. Rolled into one attribute, an
+          invitation-service outage is indistinguishable from guests mistyping their
+          addresses - both are "partial", and only one is anybody's fault.
+
+      - id: cake.invitations.failed
+        type: int
+        stability: development
+        brief: Number of guests who could not be invited.
+        examples: [0, 1]
+
+      - id: cake.invitation.status
+        type:
+          members:
+            - id: sent
+              value: sent
+              stability: development
+              brief: The invitation was accepted for delivery.
+            - id: failed
+              value: failed
+              stability: development
+              brief: The address was rejected, so the invitation bounced.
+        stability: development
+        brief: Outcome of one individual invitation.
+
+      - id: cake.invitation.recipient.domain
+        type: string
+        stability: development
+        brief: Domain part of a guest's e-mail address.
+        note: >
+          The domain only, never the address: a guest list is personal data, and a span is
+          not the place for it. The domain is enough to spot "every bounce is one provider"
+          without recording who was invited.
+        examples: [example.com]
+
+  - id: registry.cake.birthdays
+    type: attribute_group
+    display_name: Birthday job attributes
+    brief: The scheduled upcoming-birthdays job.
+    attributes:
+      - id: cake.birthdays.lookahead_days
+        type: int
+        stability: development
+        brief: Size of the window the job looks ahead over.
+        examples: [30]
+
+      - id: cake.birthdays.upcoming
+        type: int
+        stability: development
+        brief: Birthdays found within the lookahead window.
+        examples: [3]

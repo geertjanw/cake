@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.cakeandcandles</groupId>
+    <artifactId>cake-and-candles</artifactId>
+    <version>0.1.0</version>
+  </parent>
+
+  <artifactId>cake-semconv</artifactId>
+  <name>Cake &amp; Candles semantic conventions</name>
+  <description>
+    Java constants generated from semconv/registry by OpenTelemetry Weaver. One model, one
+    artifact, three services - so a renamed attribute is a compile error rather than a
+    dashboard that quietly stops matching.
+  </description>
+
+  <properties>
+    <!-- Where Weaver writes. Nothing here is checked in: the registry is the source, this
+         is build output, and Maven's home for build-time generated code is target/. -->
+    <weaver.output>${project.build.directory}/generated-sources/weaver</weaver.output>
+    <weaver.image>otel/weaver:v0.26.1</weaver.image>
+    <!-- The registry and templates live at the root of the repository, next to the code
+         they describe, rather than inside the module that happens to consume them. -->
+    <weaver.registry>${maven.multiModuleProjectDirectory}</weaver.registry>
+    <!-- -Dweaver.skip=true builds from sources generated elsewhere - which is what the
+         Dockerfile does, having run Weaver in its own stage rather than nesting Docker. -->
+    <weaver.skip>false</weaver.skip>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <!-- A library, not an application: there is nothing to repackage into a fat jar. -->
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <skip>${weaver.skip}</skip>
+          <executable>docker</executable>
+          <workingDirectory>${weaver.registry}</workingDirectory>
+        </configuration>
+        <executions>
+          <!-- Validate before generating: a duplicated or malformed definition should fail
+               the build here, with the registry's file and line, not later as odd Java. -->
+          <execution>
+            <id>weaver-check</id>
+            <phase>validate</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <arguments>
+                <argument>run</argument>
+                <argument>--rm</argument>
+                <argument>-v</argument>
+                <argument>${weaver.registry}:/w</argument>
+                <argument>-w</argument>
+                <argument>/w</argument>
+                <argument>${weaver.image}</argument>
+                <argument>registry</argument>
+                <argument>check</argument>
+                <argument>--registry</argument>
+                <argument>semconv/registry</argument>
+                <argument>--quiet</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>weaver-generate</id>
+            <phase>generate-sources</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <arguments>
+                <argument>run</argument>
+                <argument>--rm</argument>
+                <argument>-v</argument>
+                <argument>${weaver.registry}:/w</argument>
+                <argument>-w</argument>
+                <argument>/w</argument>
+                <argument>${weaver.image}</argument>
+                <argument>registry</argument>
+                <argument>generate</argument>
+                <argument>--registry</argument>
+                <argument>semconv/registry</argument>
+                <argument>--templates</argument>
+                <argument>semconv/templates</argument>
+                <argument>--quiet</argument>
+                <argument>java</argument>
+                <argument>/w/cake-semconv/target/generated-sources/weaver/com/cakeandcandles/semconv</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <id>add-generated-sources</id>
+            <phase>generate-sources</phase>
+            <goals><goal>add-source</goal></goals>
+            <configuration>
+              <sources>
+                <source>${weaver.output}</source>
+              </sources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

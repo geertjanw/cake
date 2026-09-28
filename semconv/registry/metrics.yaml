@@ -1,0 +1,102 @@
+# The demo's own metrics. Names follow OpenTelemetry's metric guidelines: a dotted
+# namespace, a noun rather than a pluralized past-tense verb, and the unit expressed in
+# `unit` rather than baked into the name.
+#
+# Note which attributes each metric is allowed to carry. That list is the metric's
+# cardinality budget, and it is deliberately short: no identifiers, no free-form strings.
+groups:
+  - id: metric.cake.bakes
+    type: metric
+    metric_name: cake.bakes
+    stability: development
+    brief: Cakes successfully baked.
+    instrument: counter
+    unit: "{cake}"
+    attributes:
+      - ref: cake.flavor
+
+  - id: metric.cake.candles.lit
+    type: metric
+    metric_name: cake.candles.lit
+    stability: development
+    brief: Candles placed on cakes.
+    instrument: counter
+    unit: "{candle}"
+    attributes:
+      - ref: cake.flavor
+
+  - id: metric.cake.oven.failures
+    type: metric
+    metric_name: cake.oven.failures
+    stability: development
+    brief: Bakes that failed.
+    note: >
+      `error.type` is the standard attribute, taken from the OpenTelemetry registry rather
+      than invented here. Its values are a closed set - `out_of_stock`, `oven_timeout` and
+      `_OTHER` - because a metric attribute with an open set of values is an open set of
+      time series.
+    instrument: counter
+    unit: "{failure}"
+    attributes:
+      - ref: cake.flavor
+      - ref: error.type
+
+  - id: metric.cake.bake.duration
+    type: metric
+    metric_name: cake.bake.duration
+    stability: development
+    brief: Measured wall-clock time of a bake.
+    note: >
+      Recorded for failed bakes too, with `error.type` set, so the two can be told apart.
+      Without that split a p95 mixes "how long a cake takes" with "how long we waited
+      before giving up", and only the first is what anyone means by bake time.
+    instrument: histogram
+    unit: s
+    attributes:
+      - ref: cake.flavor
+      - ref: error.type
+
+  - id: metric.cake.parties.planned
+    type: metric
+    metric_name: cake.parties.planned
+    stability: development
+    brief: Parties planned, by outcome.
+    instrument: counter
+    unit: "{party}"
+    attributes:
+      - ref: cake.party.outcome
+      - ref: cake.flavor
+      - ref: error.type
+
+  - id: metric.cake.parties.stored
+    type: metric
+    metric_name: cake.parties.stored
+    stability: development
+    brief: Parties currently held in memory.
+    instrument: gauge
+    unit: "{party}"
+
+  - id: metric.cake.invitations.dispatches
+    type: metric
+    metric_name: cake.invitations.dispatches
+    stability: development
+    brief: Invitation rounds, by whether invitation-service handled them.
+    note: >
+      Counted separately from `cake.parties.planned` because the two answer different
+      questions: one is "did the customer get a party", this one is "is the invitation
+      path healthy".
+    instrument: counter
+    unit: "{dispatch}"
+    attributes:
+      - ref: cake.invitations.dispatch
+      - ref: error.type
+
+  - id: metric.cake.invitations.sent
+    type: metric
+    metric_name: cake.invitations.sent
+    stability: development
+    brief: Individual invitations, by whether the address accepted them.
+    instrument: counter
+    unit: "{invitation}"
+    attributes:
+      - ref: cake.invitation.status

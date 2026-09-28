@@ -2,6 +2,10 @@ package com.cakeandcandles.cake;
 
 import com.cakeandcandles.cake.BakeryExceptions.OutOfStockException;
 import com.cakeandcandles.cake.BakeryExceptions.OvenTimeoutException;
+import com.cakeandcandles.time.Sleeper;
+import com.cakeandcandles.time.Stopwatch;
+import com.cakeandcandles.semconv.CakeAttributes;
+import com.cakeandcandles.semconv.CakeMetrics;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -13,16 +17,18 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.semconv.ErrorAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.ResultSetExtractor;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -35,13 +41,15 @@ public class Bakery {
 
     private static final Logger log = LoggerFactory.getLogger(Bakery.class);
 
-    // Attribute keys reused across spans and metrics. Keep cardinality low: flavor is a
-    // small fixed set, candles is a small integer. Never put partyId on a metric.
-    static final AttributeKey<String> FLAVOR = AttributeKey.stringKey("cake.flavor");
-    static final AttributeKey<Long> CANDLES = AttributeKey.longKey("cake.candles");
-    static final AttributeKey<String> PARTY_ID = AttributeKey.stringKey("party.id");
+    // Attribute keys come from the generated CakeAttributes, so a name lives in the
+    // registry and nowhere else. Which attribute may go on a metric is settled there too:
+    // cake.party.id is documented as spans-only, being unique per request.
+    private static final AttributeKey<String> FLAVOR = CakeAttributes.CAKE_FLAVOR;
+    private static final AttributeKey<Long> CANDLES = CakeAttributes.CAKE_CANDLES;
+    private static final AttributeKey<String> PARTY_ID = CakeAttributes.CAKE_PARTY_ID;
 
-    private final JdbcTemplate jdbc;
+    private final JdbcClient jdbc;
+    private final CakeFlavors flavors;
     private final int maxCandles;
     private final long millisPerCandle;
 
@@ -51,27 +59,32 @@ public class Bakery {
     private final LongCounter ovenFailures;
     private final DoubleHistogram bakeDuration;
 
-    public Bakery(JdbcTemplate jdbc,
+    public Bakery(JdbcClient jdbc,
+                  CakeFlavors flavors,
                   @Value("${bakery.oven.max-candles:80}") int maxCandles,
                   @Value("${bakery.oven.millis-per-candle:25}") long millisPerCandle) {
         this.jdbc = jdbc;
+        this.flavors = flavors;
         this.maxCandles = maxCandles;
         this.millisPerCandle = millisPerCandle;
 
         this.tracer = GlobalOpenTelemetry.getTracer("cake-service");
         Meter meter = GlobalOpenTelemetry.getMeter("cake-service");
-        this.cakesBaked = meter.counterBuilder("cakes.baked")
-                .setDescription("Number of cakes successfully baked").setUnit("{cake}").build();
-        this.candlesLit = meter.counterBuilder("candles.lit")
-                .setDescription("Total candles placed on cakes").setUnit("{candle}").build();
-        this.ovenFailures = meter.counterBuilder("oven.failures")
-                .setDescription("Bakes that failed").setUnit("{failure}").build();
-        this.bakeDuration = meter.histogramBuilder("bake.duration")
-                .setDescription("Time spent baking a cake").setUnit("s").build();
+        // Name, description and unit all come from the registry: the service asks for the
+        // instrument, it does not get to say what the instrument is called.
+        this.cakesBaked = CakeMetrics.createCakeBakes(meter);
+        this.candlesLit = CakeMetrics.createCakeCandlesLit(meter);
+        this.ovenFailures = CakeMetrics.createCakeOvenFailures(meter);
+        this.bakeDuration = CakeMetrics.createCakeBakeDuration(meter);
     }
 
     @Transactional
     public CakeResponse bake(CakeRequest req) {
+        // Before anything is recorded: an unserved flavor is a bad request, not a failed
+        // bake, and rejecting it here is what keeps cake.flavor bounded on every metric
+        // below. No span, no counter - nothing a caller can use to mint a time series.
+        flavors.require(req.flavor());
+
         // Custom span wrapping the whole bake, nested under the agent's HTTP server span.
         Span span = tracer.spanBuilder("bake cake")
                 .setSpanKind(SpanKind.INTERNAL)
@@ -79,63 +92,90 @@ public class Bakery {
                 .setAttribute(CANDLES, (long) req.candles())
                 .setAttribute(PARTY_ID, req.partyId())
                 .startSpan();
+        Stopwatch timer = Stopwatch.start();
+        String errorType = null;
         try (Scope ignored = span.makeCurrent()) {
             reserveFlavor(req.flavor());            // JDBC spans appear under this one
-            long bakeMillis = runOven(req);          // sleeps; the slow bit you see in traces
+            Duration bakeTime = runOven(req);        // sleeps; the slow bit you see in traces
             String cakeId = UUID.randomUUID().toString();
-            span.setAttribute("cake.id", cakeId);
+            span.setAttribute(CakeAttributes.CAKE_ID, cakeId);
 
             Attributes attrs = Attributes.of(FLAVOR, req.flavor());
             cakesBaked.add(1, attrs);
             candlesLit.add(req.candles(), attrs);
-            bakeDuration.record(bakeMillis / 1000.0, attrs);
 
-            log.info("Baked a {} cake with {} candles for party {} in {} ms",
-                    req.flavor(), req.candles(), req.partyId(), bakeMillis);
-            return new CakeResponse(cakeId, req.flavor(), req.candles(), bakeMillis);
+            log.debug("Baked a {} cake with {} candles for party {} in {} ms",
+                    req.flavor(), req.candles(), req.partyId(), bakeTime.toMillis());
+            // This is application code, not an instrumentation library, so we are the ones
+            // entitled to say the operation genuinely succeeded rather than leaving it UNSET.
+            span.setStatus(StatusCode.OK);
+            return new CakeResponse(cakeId, req.flavor(), req.candles(), bakeTime.toMillis());
         } catch (RuntimeException e) {
+            // Both failure modes here are expected business outcomes, not faults.
+            log.warn("Bake failed for party {} ({} cake, {} candles)",
+                    req.partyId(), req.flavor(), req.candles(), e);
             span.recordException(e);
             span.setStatus(StatusCode.ERROR, e.getMessage());
+            errorType = reasonOf(e);
             ovenFailures.add(1, Attributes.of(FLAVOR, req.flavor(),
-                    AttributeKey.stringKey("failure.reason"), reasonOf(e)));
+                    ErrorAttributes.ERROR_TYPE, errorType));
             throw e;
         } finally {
+            // Recorded for failures too: a bake that died after 2 seconds in the oven is
+            // part of the latency story, and leaving it out makes the histogram flatter
+            // than the service really is.
+            bakeDuration.record(timer.elapsedSeconds(), errorType == null
+                    ? Attributes.of(FLAVOR, req.flavor())
+                    : Attributes.of(FLAVOR, req.flavor(), ErrorAttributes.ERROR_TYPE, errorType));
             span.end();
         }
     }
 
     private void reserveFlavor(String flavor) {
-        Integer stock = jdbc.query(
-                "SELECT stock FROM flavor_inventory WHERE flavor = ? FOR UPDATE",
-                (ResultSetExtractor<Integer>) rs -> rs.next() ? rs.getInt("stock") : null, flavor);
-        if (stock == null) {
-            throw new OutOfStockException(flavor + " (unknown flavor)");
+        Optional<Integer> stock = jdbc
+                .sql("SELECT stock FROM flavor_inventory WHERE flavor = :flavor FOR UPDATE")
+                .param("flavor", flavor)
+                .query(Integer.class)
+                .optional();
+        if (stock.isEmpty()) {
+            // Unknown flavors are rejected before we get here, so this means a flavor we
+            // advertise has no inventory row at all: bakery.cake.flavors and data.sql have
+            // drifted apart. Treated as out of stock, but it is really a seeding bug.
+            log.error("{} is a served flavor but has no inventory row", flavor);
+            throw new OutOfStockException(flavor + " (no inventory row)");
         }
-        if (stock <= 0) {
+        int remaining = stock.get();
+        if (remaining <= 0) {
             log.warn("Out of {} - refusing order", flavor);
             throw new OutOfStockException(flavor);
         }
-        jdbc.update("UPDATE flavor_inventory SET stock = stock - 1 WHERE flavor = ?", flavor);
+        jdbc.sql("UPDATE flavor_inventory SET stock = stock - 1 WHERE flavor = :flavor")
+                .param("flavor", flavor)
+                .update();
         Span.current().addEvent("flavor reserved",
-                Attributes.of(FLAVOR, flavor, AttributeKey.longKey("inventory.remaining"), (long) stock - 1));
+                Attributes.of(FLAVOR, flavor, CakeAttributes.CAKE_INVENTORY_REMAINING, (long) remaining - 1));
     }
 
-    private long runOven(CakeRequest req) {
+    private Duration runOven(CakeRequest req) {
         Span oven = tracer.spanBuilder("oven")
                 .setAttribute(CANDLES, (long) req.candles())
                 .startSpan();
+        Stopwatch timer = Stopwatch.start();
         try (Scope ignored = oven.makeCurrent()) {
             if (req.candles() > maxCandles) {
                 // Lots of candles = old cake = long bake = timeout. A non-retryable failure.
-                sleep(2_000);
+                Sleeper.sleep(Duration.ofSeconds(2));
                 throw new OvenTimeoutException(req.candles());
             }
-            long millis = 150 + req.candles() * millisPerCandle;
-            sleep(millis);
-            return millis;
+            Sleeper.sleep(Duration.ofMillis(150 + req.candles() * millisPerCandle));
+            oven.setStatus(StatusCode.OK);
+            // How long the oven *actually* took, not how long we asked it to sleep.
+            return timer.elapsed();
         } catch (RuntimeException e) {
-            oven.recordException(e);
-            oven.setStatus(StatusCode.ERROR);
+            // Status, but deliberately no recordException: the same exception is recorded
+            // once, by bake(), where it is actually handled. Semantic conventions recommend
+            // against recording one exception more than once.
+            oven.setStatus(StatusCode.ERROR, e.getMessage());
             throw e;
         } finally {
             oven.end();
@@ -143,31 +183,37 @@ public class Bakery {
     }
 
     public List<Map<String, Object>> inventory() {
-        return jdbc.queryForList("SELECT flavor, stock FROM flavor_inventory ORDER BY flavor");
+        return jdbc.sql("SELECT flavor, stock FROM flavor_inventory ORDER BY flavor")
+                .query()
+                .listOfRows();
     }
 
     public Map<String, Object> restock(String flavor, int amount) {
-        int updated = jdbc.update("UPDATE flavor_inventory SET stock = stock + ? WHERE flavor = ?", amount, flavor);
+        // Same guard as ordering: restocking a flavor we do not serve would create an
+        // inventory row that nothing can ever order.
+        flavors.require(flavor);
+        int updated = jdbc.sql("UPDATE flavor_inventory SET stock = stock + :amount WHERE flavor = :flavor")
+                .param("amount", amount)
+                .param("flavor", flavor)
+                .update();
         if (updated == 0) {
-            jdbc.update("INSERT INTO flavor_inventory (flavor, stock) VALUES (?, ?)", flavor, amount);
+            jdbc.sql("INSERT INTO flavor_inventory (flavor, stock) VALUES (:flavor, :amount)")
+                    .param("flavor", flavor)
+                    .param("amount", amount)
+                    .update();
         }
         log.info("Restocked {} by {}", flavor, amount);
         return Map.of("flavor", flavor, "stock",
-                jdbc.queryForObject("SELECT stock FROM flavor_inventory WHERE flavor = ?", Integer.class, flavor));
+                jdbc.sql("SELECT stock FROM flavor_inventory WHERE flavor = :flavor")
+                        .param("flavor", flavor)
+                        .query(Integer.class)
+                        .single());
     }
 
+    /** Low-cardinality error.type values. Semconv reserves "_OTHER" for anything unrecognised. */
     private static String reasonOf(RuntimeException e) {
         if (e instanceof OutOfStockException) return "out_of_stock";
         if (e instanceof OvenTimeoutException) return "oven_timeout";
-        return "unknown";
-    }
-
-    private static void sleep(long millis) {
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while baking", e);
-        }
+        return ErrorAttributes.ErrorTypeValues.OTHER;
     }
 }

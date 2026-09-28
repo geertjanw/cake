@@ -1,0 +1,11 @@
+name: cake
+description: >
+  Semantic conventions for the Cake & Candles demo.
+schema_url: https://cakeandcandles.example.com/schemas/0.1.0
+# So that `error.type` can be referenced rather than redefined: failures are classified
+# with the standard attribute, and only the domain-specific names are ours. Pinned to the
+# same version as the opentelemetry-semconv dependency in pom.xml.
+dependencies:
+  - schema_url: https://opentelemetry.io/schemas/1.32.0
+    registry_path: https://github.com/open-telemetry/semantic-conventions@v1.32.0[model]
+

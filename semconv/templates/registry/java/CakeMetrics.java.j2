@@ -1,0 +1,72 @@
+{#- Renders one factory method per metric. The point is that name, unit and description
+    cannot drift from the model: a service asks for the instrument, it does not spell out
+    what the instrument is called. -#}
+// Generated from semconv/registry by OpenTelemetry Weaver. DO NOT EDIT.
+// Regenerate with: ./scripts/generate-semconv.sh
+package {{ params.package }};
+
+import io.opentelemetry.api.metrics.DoubleHistogram;
+import io.opentelemetry.api.metrics.LongCounter;
+import io.opentelemetry.api.metrics.LongGaugeBuilder;
+import io.opentelemetry.api.metrics.LongUpDownCounter;
+import io.opentelemetry.api.metrics.Meter;
+
+/** Instruments the Cake &amp; Candles services record, built to the registry's definition. */
+public final class CakeMetrics {
+{% for metric in ctx %}
+{%- set method = "create" ~ (metric.metric_name | pascal_case) %}
+  /**
+   * {{ metric.brief | trim | replace("\n", "\n   * ") }}
+   {%- if metric.note %}
+   *
+   * <p>{{ metric.note | trim | replace("\n", "\n   * ") }}
+   {%- endif %}
+   *
+   * <p>Instrument: {{ metric.instrument }}, unit: {@code {{ metric.unit }}}
+   {%- if metric.attributes %}, attributes: {{ metric.attributes | map(attribute="name") | join(", ") }}{% endif %}
+   */
+  public static final String {{ metric.metric_name | screaming_snake_case }} = "{{ metric.metric_name }}";
+
+{% if metric.instrument == "counter" %}
+  /** Builds {@code {{ metric.metric_name }}}. */
+  public static LongCounter {{ method }}(Meter meter) {
+    return meter
+        .counterBuilder({{ metric.metric_name | screaming_snake_case }})
+        .setDescription("{{ metric.brief | trim | replace("\n", " ") }}")
+        .setUnit("{{ metric.unit }}")
+        .build();
+  }
+{% elif metric.instrument == "updowncounter" %}
+  /** Builds {@code {{ metric.metric_name }}}. */
+  public static LongUpDownCounter {{ method }}(Meter meter) {
+    return meter
+        .upDownCounterBuilder({{ metric.metric_name | screaming_snake_case }})
+        .setDescription("{{ metric.brief | trim | replace("\n", " ") }}")
+        .setUnit("{{ metric.unit }}")
+        .build();
+  }
+{% elif metric.instrument == "histogram" %}
+  /** Builds {@code {{ metric.metric_name }}}. */
+  public static DoubleHistogram {{ method }}(Meter meter) {
+    return meter
+        .histogramBuilder({{ metric.metric_name | screaming_snake_case }})
+        .setDescription("{{ metric.brief | trim | replace("\n", " ") }}")
+        .setUnit("{{ metric.unit }}")
+        .build();
+  }
+{% elif metric.instrument == "gauge" %}
+  /**
+   * Builds {@code {{ metric.metric_name }}}. An observable gauge is finished by the caller
+   * with {@code buildWithCallback(...)}, which is where the value actually comes from.
+   */
+  public static LongGaugeBuilder {{ method }}(Meter meter) {
+    return meter
+        .gaugeBuilder({{ metric.metric_name | screaming_snake_case }})
+        .ofLongs()
+        .setDescription("{{ metric.brief | trim | replace("\n", " ") }}")
+        .setUnit("{{ metric.unit }}");
+  }
+{% endif %}
+{%- endfor %}
+  private CakeMetrics() {}
+}

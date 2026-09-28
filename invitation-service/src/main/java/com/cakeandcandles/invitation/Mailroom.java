@@ -1,5 +1,8 @@
 package com.cakeandcandles.invitation;
 
+import com.cakeandcandles.semconv.CakeAttributes;
+import com.cakeandcandles.semconv.CakeAttributes.CakeInvitationStatusValues;
+import com.cakeandcandles.semconv.CakeMetrics;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -29,20 +32,19 @@ public class Mailroom {
     private static final Logger log = LoggerFactory.getLogger(Mailroom.class);
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
-    private static final AttributeKey<String> STATUS = AttributeKey.stringKey("invitation.status");
-    private static final AttributeKey<String> PARTY_ID = AttributeKey.stringKey("party.id");
+    private static final AttributeKey<String> STATUS = CakeAttributes.CAKE_INVITATION_STATUS;
+    private static final AttributeKey<String> PARTY_ID = CakeAttributes.CAKE_PARTY_ID;
 
     private final Tracer tracer = GlobalOpenTelemetry.getTracer("invitation-service");
     private final LongCounter invitations;
 
     public Mailroom() {
         Meter meter = GlobalOpenTelemetry.getMeter("invitation-service");
-        this.invitations = meter.counterBuilder("invitations.sent")
-                .setDescription("Invitations attempted, by status").setUnit("{invitation}").build();
+        this.invitations = CakeMetrics.createCakeInvitationsSent(meter);
     }
 
     public InvitationResponse sendAll(InvitationRequest req) {
-        Span.current().setAttribute("invitations.count", req.guests().size());
+        Span.current().setAttribute(CakeAttributes.CAKE_PARTY_GUEST_COUNT, (long) req.guests().size());
         Span.current().setAttribute(PARTY_ID, req.partyId());
 
         List<String> failed = new ArrayList<>();
@@ -60,7 +62,7 @@ public class Mailroom {
         Span span = tracer.spanBuilder("send invitation")
                 .setAttribute(PARTY_ID, req.partyId())
                 // e-mail is PII - keep only the domain on the span
-                .setAttribute("invitation.recipient.domain", domainOf(guest))
+                .setAttribute(CakeAttributes.CAKE_INVITATION_RECIPIENT_DOMAIN, domainOf(guest))
                 .startSpan();
         try (Scope ignored = span.makeCurrent()) {
             if (!EMAIL.matcher(guest).matches()) {
@@ -69,15 +71,15 @@ public class Mailroom {
             // Pretend to talk to an SMTP server.
             Thread.sleep(ThreadLocalRandom.current().nextLong(20, 120));
             log.debug("Invitation for {}'s {}th birthday sent to {}", req.hostName(), req.age(), domainOf(guest));
-            invitations.add(1, Attributes.of(STATUS, "sent"));
-            span.setAttribute(STATUS, "sent");
+            invitations.add(1, Attributes.of(STATUS, CakeInvitationStatusValues.SENT));
+            span.setAttribute(STATUS, CakeInvitationStatusValues.SENT);
             return true;
         } catch (IllegalArgumentException e) {
-            log.warn("Could not invite guest for party {}: {}", req.partyId(), e.getMessage());
+            log.warn("Could not invite guest for party {}", req.partyId(), e);
             span.recordException(e);
             span.setStatus(StatusCode.ERROR, e.getMessage());
-            span.setAttribute(STATUS, "failed");
-            invitations.add(1, Attributes.of(STATUS, "failed"));
+            span.setAttribute(STATUS, CakeInvitationStatusValues.FAILED);
+            invitations.add(1, Attributes.of(STATUS, CakeInvitationStatusValues.FAILED));
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

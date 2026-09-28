@@ -1,0 +1,42 @@
+{#- Renders every attribute in the `cake` namespace as an AttributeKey constant.
+    Enum attributes also get a nested class of the values they are allowed to take, so a
+    call site cannot invent a new one - which is what keeps the metrics they appear on
+    from growing time series nobody chose. -#}
+// Generated from semconv/registry by OpenTelemetry Weaver. DO NOT EDIT.
+// Regenerate with: ./scripts/generate-semconv.sh
+package {{ params.package }};
+
+import io.opentelemetry.api.common.AttributeKey;
+
+/** Attributes the Cake &amp; Candles services set by hand. */
+public final class CakeAttributes {
+{% for attr in ctx %}
+{%- set is_enum = attr.type is not string %}
+  /**
+   * {{ attr.brief | trim | replace("\n", "\n   * ") }}
+   {%- if attr.note %}
+   *
+   * <p>{{ attr.note | trim | replace("\n", "\n   * ") }}
+   {%- endif %}
+   {%- if attr.examples %}
+   *
+   * <p>Examples: {{ attr.examples | join(", ") }}
+   {%- endif %}
+   */
+  public static final AttributeKey<{{ "String" if is_enum else attr.type | map_text("java_types") }}> {{ attr.name | screaming_snake_case }} =
+      AttributeKey.{{ "stringKey" if is_enum else attr.type | map_text("java_keys") }}("{{ attr.name }}");
+{% if is_enum %}
+  /** Values {@link #{{ attr.name | screaming_snake_case }}} is allowed to take. */
+  public static final class {{ attr.name | pascal_case }}Values {
+{%- for member in attr.type.members %}
+    /** {{ member.brief | trim }} */
+    public static final String {{ member.id | screaming_snake_case }} = "{{ member.value }}";
+{%- endfor %}
+
+    private {{ attr.name | pascal_case }}Values() {}
+  }
+
+{% endif %}
+{%- endfor %}
+  private CakeAttributes() {}
+}
