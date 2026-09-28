@@ -401,11 +401,16 @@ them in **Dash0 → Tracing**.
 The demo emits the following, all with low-cardinality attributes only. `error.type` is one
 of the few [standard attribute names](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/)
 that fits this domain, so the code takes its key and its `_OTHER` fallback from the
-`opentelemetry-semconv` library rather than spelling the string out:
+`opentelemetry-semconv` library rather than spelling the string out. A standard key is only
+half the job, though: the *values* have to be a closed set too, so each client fixes them in
+an enum (`CakeClient.ErrorType`, `InvitationClient.ErrorType`) instead of reaching for
+something convenient like the exception's class name, which would let a library upgrade mint
+new time series on its own:
 
 | Metric | Type | Where | Attributes |
 |---|---|---|---|
-| `parties.planned` | counter | party-service | `party.outcome`, `cake.flavor` |
+| `parties.planned` | counter | party-service | `party.outcome`, `cake.flavor`, `error.type` (failures only) |
+| `invitations.dispatch` | counter | party-service | `invitations.dispatch`, `error.type` (failures only) |
 | `parties.stored` | gauge | party-service | (none) |
 | `cakes.baked` | counter | cake-service | `cake.flavor` |
 | `candles.lit` | counter | cake-service | `cake.flavor` |

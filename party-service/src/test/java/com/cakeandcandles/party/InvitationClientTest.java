@@ -1,6 +1,7 @@
 package com.cakeandcandles.party;
 
 import com.cakeandcandles.party.InvitationClient.Dispatch;
+import com.cakeandcandles.party.InvitationClient.ErrorType;
 import com.cakeandcandles.party.InvitationClient.Result;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -49,6 +50,7 @@ class InvitationClientTest {
         Result result = client.send("party-1", "Ada", 36, GUESTS);
 
         assertThat(result.dispatch()).isEqualTo(Dispatch.DELIVERED);
+        assertThat(result.errorType()).isNull();
         assertThat(result.sent()).isEqualTo(2);
         assertThat(result.failed()).isZero();
         server.verify();
@@ -65,6 +67,8 @@ class InvitationClientTest {
         Result result = client.send("party-1", "Ada", 36, GUESTS);
 
         assertThat(result.dispatch()).isEqualTo(Dispatch.PARTIAL);
+        // Bounced addresses are not an error.type: invitation-service worked perfectly.
+        assertThat(result.errorType()).isNull();
         assertThat(result.sent()).isEqualTo(1);
         assertThat(result.failedGuests()).containsExactly("b@example.com");
     }
@@ -78,6 +82,7 @@ class InvitationClientTest {
         Result result = client.send("party-1", "Ada", 36, GUESTS);
 
         assertThat(result.dispatch()).isEqualTo(Dispatch.UNAVAILABLE);
+        assertThat(result.errorType()).isEqualTo(ErrorType.SERVER_ERROR);
         assertThat(result.sent()).isZero();
         assertThat(result.failed()).isEqualTo(GUESTS.size());
         assertThat(result.failedGuests()).containsExactlyElementsOf(GUESTS);
@@ -94,7 +99,22 @@ class InvitationClientTest {
         Result result = client.send("party-1", "Ada", 36, GUESTS);
 
         assertThat(result.dispatch()).isEqualTo(Dispatch.UNAVAILABLE);
+        assertThat(result.errorType()).isEqualTo(ErrorType.UNREACHABLE);
         assertThat(result.failedGuests()).containsExactlyElementsOf(GUESTS);
+    }
+
+    @Test
+    @DisplayName("a 4xx is a rejected request, not an unreachable service")
+    void clientErrorIsRejected() {
+        // Same Dispatch, different cause: nothing about invitation-service is broken, so
+        // this must not land in the same bucket as an outage.
+        server.expect(requestTo("http://invitation-service/invitations"))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+
+        Result result = client.send("party-1", "Ada", 36, GUESTS);
+
+        assertThat(result.dispatch()).isEqualTo(Dispatch.UNAVAILABLE);
+        assertThat(result.errorType()).isEqualTo(ErrorType.REJECTED);
     }
 
     @Test
@@ -108,6 +128,7 @@ class InvitationClientTest {
         Result result = client.send("party-1", "Ada", 36, GUESTS);
 
         assertThat(result.dispatch()).isEqualTo(Dispatch.UNAVAILABLE);
+        assertThat(result.errorType()).isEqualTo(ErrorType.EMPTY_RESPONSE);
         assertThat(result.failed()).isEqualTo(GUESTS.size());
     }
 
@@ -121,5 +142,16 @@ class InvitationClientTest {
         Result result = client.send("party-1", "Ada", 36, GUESTS);
 
         assertThat(result.sent() + result.failed()).isEqualTo(GUESTS.size());
+    }
+
+    @Test
+    @DisplayName("error.type values are the ones we chose, not exception class names")
+    void errorTypeValuesAreBounded() {
+        // The regression this guards: deriving error.type from the exception class meant
+        // every RestClientException subclass Spring adds became a new metric time series.
+        assertThat(ErrorType.values())
+                .extracting(ErrorType::value)
+                .containsExactlyInAnyOrder("invitation_service_error", "invitations_rejected",
+                        "invitation_service_unreachable", "empty_response", "_OTHER");
     }
 }

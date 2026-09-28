@@ -8,6 +8,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
@@ -39,7 +42,42 @@ public class InvitationClient {
         UNAVAILABLE
     }
 
-    public record Result(Dispatch dispatch, int sent, int failed, List<String> failedGuests) {}
+    /**
+     * Every way an invitation round can fail, and the {@code error.type} value for each.
+     *
+     * <p>An enum rather than the exception's class name, precisely because these end up as
+     * metric attributes: {@code RestClientException} has a dozen subclasses and any library
+     * upgrade can add more, so deriving the value from the type meant the set of time series
+     * was decided by Spring rather than by us. The wire values are spelled out instead of
+     * derived from the constant names, so renaming a constant cannot orphan a dashboard.
+     */
+    public enum ErrorType {
+        /** invitation-service answered with a 5xx. */
+        SERVER_ERROR("invitation_service_error"),
+        /** 4xx: invitation-service is fine, our request is not. */
+        REJECTED("invitations_rejected"),
+        /** invitation-service could not be reached at all. */
+        UNREACHABLE("invitation_service_unreachable"),
+        /** A 2xx carrying no report of what was sent. */
+        EMPTY_RESPONSE("empty_response"),
+        /** Anything unrecognised. Semconv reserves "_OTHER" for exactly this. */
+        OTHER(ErrorAttributes.ErrorTypeValues.OTHER);
+
+        private final String value;
+
+        ErrorType(String value) {
+            this.value = value;
+        }
+
+        /** The value to record as {@code error.type}. */
+        public String value() {
+            return value;
+        }
+    }
+
+    /** {@code errorType} is null unless the dispatch was {@link Dispatch#UNAVAILABLE}. */
+    public record Result(Dispatch dispatch, ErrorType errorType, int sent, int failed,
+                         List<String> failedGuests) {}
 
     /** What invitation-service actually puts on the wire. */
     private record InvitationsResponse(int sent, int failed, List<String> failedGuests) {}
@@ -59,12 +97,12 @@ public class InvitationClient {
             if (response == null) {
                 // A 2xx with no body. Rare, but returning "0 sent, 0 failed" here would
                 // quietly report a party as fully invited when nothing is known.
-                return unavailable(guests, "empty_response", null);
+                return unavailable(guests, ErrorType.EMPTY_RESPONSE, null);
             }
 
             Dispatch dispatch = response.failed() == 0 ? Dispatch.DELIVERED : Dispatch.PARTIAL;
             Span.current().setAttribute(DISPATCH, dispatch.name());
-            return new Result(dispatch, response.sent(), response.failed(), response.failedGuests());
+            return new Result(dispatch, null, response.sent(), response.failed(), response.failedGuests());
         } catch (RestClientException e) {
             // Invitations are best-effort, so the party still happens - but "best-effort"
             // must not mean "silent". Without this the only trace of an invitation-service
@@ -74,26 +112,28 @@ public class InvitationClient {
         }
     }
 
-    private Result unavailable(List<String> guests, String errorType, RestClientException cause) {
+    private Result unavailable(List<String> guests, ErrorType errorType, RestClientException cause) {
         Span span = Span.current();
         span.setAttribute(DISPATCH, Dispatch.UNAVAILABLE.name());
-        span.setAttribute(ErrorAttributes.ERROR_TYPE, errorType);
+        span.setAttribute(ErrorAttributes.ERROR_TYPE, errorType.value());
         if (cause != null) {
             span.recordException(cause);
         }
         // An event rather than a span status: the party itself did not fail, so marking the
         // server span ERROR would inflate the endpoint's error rate for a degraded success.
         span.addEvent("invitations unavailable", Attributes.of(
-                ErrorAttributes.ERROR_TYPE, errorType,
+                ErrorAttributes.ERROR_TYPE, errorType.value(),
                 GUEST_COUNT, (long) guests.size()));
 
         log.error("invitation-service unavailable ({}), {} guest(s) not invited",
-                errorType, guests.size(), cause);
-        return new Result(Dispatch.UNAVAILABLE, 0, guests.size(), guests);
+                errorType.value(), guests.size(), cause);
+        return new Result(Dispatch.UNAVAILABLE, errorType, 0, guests.size(), guests);
     }
 
-    /** Low-cardinality: the exception's simple name, never its message. */
-    private static String errorTypeOf(RestClientException e) {
-        return e.getClass().getSimpleName();
+    private static ErrorType errorTypeOf(RestClientException e) {
+        if (e instanceof HttpServerErrorException) return ErrorType.SERVER_ERROR;
+        if (e instanceof HttpClientErrorException) return ErrorType.REJECTED;
+        if (e instanceof ResourceAccessException) return ErrorType.UNREACHABLE;
+        return ErrorType.OTHER;
     }
 }

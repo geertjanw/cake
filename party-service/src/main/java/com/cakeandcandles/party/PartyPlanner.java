@@ -119,7 +119,13 @@ public class PartyPlanner {
         // party.outcome is "did the customer get a party", invitations.dispatch is "is the
         // invitation path healthy". Rolled into one attribute, an invitation-service outage
         // is indistinguishable from guests mistyping their addresses - both are "partial".
-        invitationDispatches.add(1, Attributes.of(DISPATCH, inv.dispatch().name().toLowerCase()));
+        // error.type only when there is an error to type, and only ever one of
+        // InvitationClient.ErrorType - which is what makes putting it on a metric safe.
+        String dispatch = inv.dispatch().name().toLowerCase();
+        invitationDispatches.add(1, inv.errorType() == null
+                ? Attributes.of(DISPATCH, dispatch)
+                : Attributes.of(DISPATCH, dispatch,
+                        ErrorAttributes.ERROR_TYPE, inv.errorType().value()));
         partiesPlanned.add(1, Attributes.of(OUTCOME, status.name().toLowerCase(), FLAVOR, req.flavor()));
 
         // Only set when nobody could be invited, so the API response says why the party is

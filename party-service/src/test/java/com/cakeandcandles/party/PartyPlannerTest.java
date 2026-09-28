@@ -47,7 +47,7 @@ class PartyPlannerTest {
 
     private void invitationsSucceed() {
         when(invitations.send(anyString(), anyString(), anyInt(), any()))
-                .thenReturn(new InvitationClient.Result(Dispatch.DELIVERED, GUESTS.size(), 0, List.of()));
+                .thenReturn(new InvitationClient.Result(Dispatch.DELIVERED, null, GUESTS.size(), 0, List.of()));
     }
 
     @Test
@@ -123,7 +123,8 @@ class PartyPlannerTest {
         when(cakes.order(anyString(), anyString(), anyInt()))
                 .thenReturn(new CakeClient.Cake("cake-1", "chocolate", 36, 400));
         when(invitations.send(anyString(), anyString(), anyInt(), any()))
-                .thenReturn(new InvitationClient.Result(Dispatch.UNAVAILABLE, 0, GUESTS.size(), GUESTS));
+                .thenReturn(new InvitationClient.Result(Dispatch.UNAVAILABLE,
+                        InvitationClient.ErrorType.UNREACHABLE, 0, GUESTS.size(), GUESTS));
 
         Party party = planner.plan(request());
 
