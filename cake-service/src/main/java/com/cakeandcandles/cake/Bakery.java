@@ -2,6 +2,7 @@ package com.cakeandcandles.cake;
 
 import com.cakeandcandles.cake.BakeryExceptions.OutOfStockException;
 import com.cakeandcandles.cake.BakeryExceptions.OvenTimeoutException;
+import com.cakeandcandles.time.Stopwatch;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -13,6 +14,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.semconv.ErrorAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +23,7 @@ import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -67,7 +70,8 @@ public class Bakery {
         this.ovenFailures = meter.counterBuilder("oven.failures")
                 .setDescription("Bakes that failed").setUnit("{failure}").build();
         this.bakeDuration = meter.histogramBuilder("bake.duration")
-                .setDescription("Time spent baking a cake").setUnit("s").build();
+                .setDescription("Measured wall-clock time of a bake")
+                .setUnit("s").build();
     }
 
     @Transactional
@@ -79,27 +83,36 @@ public class Bakery {
                 .setAttribute(CANDLES, (long) req.candles())
                 .setAttribute(PARTY_ID, req.partyId())
                 .startSpan();
+        Stopwatch timer = Stopwatch.start();
+        String errorType = null;
         try (Scope ignored = span.makeCurrent()) {
             reserveFlavor(req.flavor());            // JDBC spans appear under this one
-            long bakeMillis = runOven(req);          // sleeps; the slow bit you see in traces
+            Duration bakeTime = runOven(req);        // sleeps; the slow bit you see in traces
             String cakeId = UUID.randomUUID().toString();
             span.setAttribute("cake.id", cakeId);
 
             Attributes attrs = Attributes.of(FLAVOR, req.flavor());
             cakesBaked.add(1, attrs);
             candlesLit.add(req.candles(), attrs);
-            bakeDuration.record(bakeMillis / 1000.0, attrs);
 
-            log.info("Baked a {} cake with {} candles for party {} in {} ms",
-                    req.flavor(), req.candles(), req.partyId(), bakeMillis);
-            return new CakeResponse(cakeId, req.flavor(), req.candles(), bakeMillis);
+            log.debug("Baked a {} cake with {} candles for party {} in {} ms",
+                    req.flavor(), req.candles(), req.partyId(), bakeTime.toMillis());
+            // This is application code, not an instrumentation library, so we are the ones
+            // entitled to say the operation genuinely succeeded rather than leaving it UNSET.
+            span.setStatus(StatusCode.OK);
+            return new CakeResponse(cakeId, req.flavor(), req.candles(), bakeTime.toMillis());
         } catch (RuntimeException e) {
+            errorType = reasonOf(e);
             span.recordException(e);
             span.setStatus(StatusCode.ERROR, e.getMessage());
             ovenFailures.add(1, Attributes.of(FLAVOR, req.flavor(),
-                    AttributeKey.stringKey("failure.reason"), reasonOf(e)));
+                    ErrorAttributes.ERROR_TYPE, errorType));
             throw e;
         } finally {
+            Attributes dataPointAttributes = errorType == null
+                    ? Attributes.of(FLAVOR, req.flavor())
+                    : Attributes.of(FLAVOR, req.flavor(), ErrorAttributes.ERROR_TYPE, errorType);
+            bakeDuration.record(timer.elapsedSeconds(), dataPointAttributes);
             span.end();
         }
     }
@@ -120,19 +133,21 @@ public class Bakery {
                 Attributes.of(FLAVOR, flavor, AttributeKey.longKey("inventory.remaining"), (long) stock - 1));
     }
 
-    private long runOven(CakeRequest req) {
+    private Duration runOven(CakeRequest req) {
         Span oven = tracer.spanBuilder("oven")
                 .setAttribute(CANDLES, (long) req.candles())
                 .startSpan();
+        Stopwatch timer = Stopwatch.start();
         try (Scope ignored = oven.makeCurrent()) {
             if (req.candles() > maxCandles) {
                 // Lots of candles = old cake = long bake = timeout. A non-retryable failure.
                 sleep(2_000);
                 throw new OvenTimeoutException(req.candles());
             }
-            long millis = 150 + req.candles() * millisPerCandle;
-            sleep(millis);
-            return millis;
+            sleep(150 + req.candles() * millisPerCandle);
+            oven.setStatus(StatusCode.OK);
+            // How long the oven *actually* took, not how long we asked it to sleep.
+            return timer.elapsed();
         } catch (RuntimeException e) {
             oven.recordException(e);
             oven.setStatus(StatusCode.ERROR);
@@ -156,10 +171,11 @@ public class Bakery {
                 jdbc.queryForObject("SELECT stock FROM flavor_inventory WHERE flavor = ?", Integer.class, flavor));
     }
 
+    /** Low-cardinality error.type values. Semconv reserves "_OTHER" for anything unrecognised. */
     private static String reasonOf(RuntimeException e) {
         if (e instanceof OutOfStockException) return "out_of_stock";
         if (e instanceof OvenTimeoutException) return "oven_timeout";
-        return "unknown";
+        return ErrorAttributes.ErrorTypeValues.OTHER;
     }
 
     private static void sleep(long millis) {

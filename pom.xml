@@ -27,6 +27,7 @@
   <properties>
     <java.version>21</java.version>
     <opentelemetry.version>1.54.0</opentelemetry.version>
+    <opentelemetry-semconv.version>1.32.0</opentelemetry-semconv.version>
   </properties>
 
   <dependencyManagement>
@@ -59,6 +60,19 @@
     <dependency>
       <groupId>io.opentelemetry</groupId>
       <artifactId>opentelemetry-api</artifactId>
+    </dependency>
+    <!-- Generated AttributeKey constants for the stable semantic conventions, so
+         attribute names are never spelled out by hand. Only the stable artifact:
+         -incubating changes without notice. -->
+    <dependency>
+      <groupId>io.opentelemetry.semconv</groupId>
+      <artifactId>opentelemetry-semconv</artifactId>
+      <version>${opentelemetry-semconv.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
