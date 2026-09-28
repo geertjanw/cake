@@ -19,14 +19,14 @@ import io.opentelemetry.semconv.ErrorAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.ResultSetExtractor;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -46,7 +46,7 @@ public class Bakery {
     static final AttributeKey<Long> CANDLES = AttributeKey.longKey("cake.candles");
     static final AttributeKey<String> PARTY_ID = AttributeKey.stringKey("party.id");
 
-    private final JdbcTemplate jdbc;
+    private final JdbcClient jdbc;
     private final CakeFlavors flavors;
     private final int maxCandles;
     private final long millisPerCandle;
@@ -57,7 +57,7 @@ public class Bakery {
     private final LongCounter ovenFailures;
     private final DoubleHistogram bakeDuration;
 
-    public Bakery(JdbcTemplate jdbc,
+    public Bakery(JdbcClient jdbc,
                   CakeFlavors flavors,
                   @Value("${bakery.oven.max-candles:80}") int maxCandles,
                   @Value("${bakery.oven.millis-per-candle:25}") long millisPerCandle) {
@@ -129,23 +129,28 @@ public class Bakery {
     }
 
     private void reserveFlavor(String flavor) {
-        Integer stock = jdbc.query(
-                "SELECT stock FROM flavor_inventory WHERE flavor = ? FOR UPDATE",
-                (ResultSetExtractor<Integer>) rs -> rs.next() ? rs.getInt("stock") : null, flavor);
-        if (stock == null) {
+        Optional<Integer> stock = jdbc
+                .sql("SELECT stock FROM flavor_inventory WHERE flavor = :flavor FOR UPDATE")
+                .param("flavor", flavor)
+                .query(Integer.class)
+                .optional();
+        if (stock.isEmpty()) {
             // Unknown flavors are rejected before we get here, so this means a flavor we
             // advertise has no inventory row at all: bakery.cake.flavors and data.sql have
             // drifted apart. Treated as out of stock, but it is really a seeding bug.
             log.error("{} is a served flavor but has no inventory row", flavor);
             throw new OutOfStockException(flavor + " (no inventory row)");
         }
-        if (stock <= 0) {
+        int remaining = stock.get();
+        if (remaining <= 0) {
             log.warn("Out of {} - refusing order", flavor);
             throw new OutOfStockException(flavor);
         }
-        jdbc.update("UPDATE flavor_inventory SET stock = stock - 1 WHERE flavor = ?", flavor);
+        jdbc.sql("UPDATE flavor_inventory SET stock = stock - 1 WHERE flavor = :flavor")
+                .param("flavor", flavor)
+                .update();
         Span.current().addEvent("flavor reserved",
-                Attributes.of(FLAVOR, flavor, AttributeKey.longKey("inventory.remaining"), (long) stock - 1));
+                Attributes.of(FLAVOR, flavor, AttributeKey.longKey("inventory.remaining"), (long) remaining - 1));
     }
 
     private Duration runOven(CakeRequest req) {
@@ -175,20 +180,31 @@ public class Bakery {
     }
 
     public List<Map<String, Object>> inventory() {
-        return jdbc.queryForList("SELECT flavor, stock FROM flavor_inventory ORDER BY flavor");
+        return jdbc.sql("SELECT flavor, stock FROM flavor_inventory ORDER BY flavor")
+                .query()
+                .listOfRows();
     }
 
     public Map<String, Object> restock(String flavor, int amount) {
         // Same guard as ordering: restocking a flavor we do not serve would create an
         // inventory row that nothing can ever order.
         flavors.require(flavor);
-        int updated = jdbc.update("UPDATE flavor_inventory SET stock = stock + ? WHERE flavor = ?", amount, flavor);
+        int updated = jdbc.sql("UPDATE flavor_inventory SET stock = stock + :amount WHERE flavor = :flavor")
+                .param("amount", amount)
+                .param("flavor", flavor)
+                .update();
         if (updated == 0) {
-            jdbc.update("INSERT INTO flavor_inventory (flavor, stock) VALUES (?, ?)", flavor, amount);
+            jdbc.sql("INSERT INTO flavor_inventory (flavor, stock) VALUES (:flavor, :amount)")
+                    .param("flavor", flavor)
+                    .param("amount", amount)
+                    .update();
         }
         log.info("Restocked {} by {}", flavor, amount);
         return Map.of("flavor", flavor, "stock",
-                jdbc.queryForObject("SELECT stock FROM flavor_inventory WHERE flavor = ?", Integer.class, flavor));
+                jdbc.sql("SELECT stock FROM flavor_inventory WHERE flavor = :flavor")
+                        .param("flavor", flavor)
+                        .query(Integer.class)
+                        .single());
     }
 
     /** Low-cardinality error.type values. Semconv reserves "_OTHER" for anything unrecognised. */
