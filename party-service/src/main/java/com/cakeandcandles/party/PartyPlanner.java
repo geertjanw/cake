@@ -9,6 +9,7 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.semconv.ErrorAttributes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -86,7 +87,15 @@ public class PartyPlanner {
             log.error("No cake for party {}: {}", partyId, e.getMessage());
             current.setStatus(StatusCode.ERROR, "cake order failed");
             current.recordException(e);
-            partiesPlanned.add(1, Attributes.of(OUTCOME, "failed", FLAVOR, req.flavor()));
+            // Why it failed, not just that it did: out_of_stock, oven_timeout and
+            // cake_rejected call for completely different responses, and only the first
+            // is a bakery problem at all. It goes on the metric rather than on the server
+            // span, because the agent owns error.type there: its HTTP instrumentation
+            // overwrites the key at span end with the status code for any 5xx.
+            partiesPlanned.add(1, Attributes.of(
+                    OUTCOME, "failed",
+                    FLAVOR, req.flavor(),
+                    ErrorAttributes.ERROR_TYPE, e.errorType().value()));
             return store(new Party(partyId, req.name(), req.birthDate(), age, req.flavor(), req.guests(),
                     Party.Status.FAILED, null, 0, 0, e.getMessage(), Instant.now()));
         }
