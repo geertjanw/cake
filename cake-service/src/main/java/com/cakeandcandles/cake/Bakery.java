@@ -2,6 +2,7 @@ package com.cakeandcandles.cake;
 
 import com.cakeandcandles.cake.BakeryExceptions.OutOfStockException;
 import com.cakeandcandles.cake.BakeryExceptions.OvenTimeoutException;
+import com.cakeandcandles.time.Sleeper;
 import com.cakeandcandles.time.Stopwatch;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
@@ -38,13 +39,15 @@ public class Bakery {
 
     private static final Logger log = LoggerFactory.getLogger(Bakery.class);
 
-    // Attribute keys reused across spans and metrics. Keep cardinality low: flavor is a
-    // small fixed set, candles is a small integer. Never put partyId on a metric.
+    // Attribute keys reused across spans and metrics. Candles is a small integer, and
+    // flavor is bounded by CakeFlavors before it reaches a metric. Never put partyId on
+    // a metric: it is unique per request, so every party would be its own time series.
     static final AttributeKey<String> FLAVOR = AttributeKey.stringKey("cake.flavor");
     static final AttributeKey<Long> CANDLES = AttributeKey.longKey("cake.candles");
     static final AttributeKey<String> PARTY_ID = AttributeKey.stringKey("party.id");
 
     private final JdbcTemplate jdbc;
+    private final CakeFlavors flavors;
     private final int maxCandles;
     private final long millisPerCandle;
 
@@ -55,9 +58,11 @@ public class Bakery {
     private final DoubleHistogram bakeDuration;
 
     public Bakery(JdbcTemplate jdbc,
+                  CakeFlavors flavors,
                   @Value("${bakery.oven.max-candles:80}") int maxCandles,
                   @Value("${bakery.oven.millis-per-candle:25}") long millisPerCandle) {
         this.jdbc = jdbc;
+        this.flavors = flavors;
         this.maxCandles = maxCandles;
         this.millisPerCandle = millisPerCandle;
 
@@ -76,6 +81,11 @@ public class Bakery {
 
     @Transactional
     public CakeResponse bake(CakeRequest req) {
+        // Before anything is recorded: an unserved flavor is a bad request, not a failed
+        // bake, and rejecting it here is what keeps cake.flavor bounded on every metric
+        // below. No span, no counter - nothing a caller can use to mint a time series.
+        flavors.require(req.flavor());
+
         // Custom span wrapping the whole bake, nested under the agent's HTTP server span.
         Span span = tracer.spanBuilder("bake cake")
                 .setSpanKind(SpanKind.INTERNAL)
@@ -122,7 +132,11 @@ public class Bakery {
                 "SELECT stock FROM flavor_inventory WHERE flavor = ? FOR UPDATE",
                 (ResultSetExtractor<Integer>) rs -> rs.next() ? rs.getInt("stock") : null, flavor);
         if (stock == null) {
-            throw new OutOfStockException(flavor + " (unknown flavor)");
+            // Unknown flavors are rejected before we get here, so this means a flavor we
+            // advertise has no inventory row at all: bakery.cake.flavors and data.sql have
+            // drifted apart. Treated as out of stock, but it is really a seeding bug.
+            log.error("{} is a served flavor but has no inventory row", flavor);
+            throw new OutOfStockException(flavor + " (no inventory row)");
         }
         if (stock <= 0) {
             log.warn("Out of {} - refusing order", flavor);
@@ -141,10 +155,10 @@ public class Bakery {
         try (Scope ignored = oven.makeCurrent()) {
             if (req.candles() > maxCandles) {
                 // Lots of candles = old cake = long bake = timeout. A non-retryable failure.
-                sleep(2_000);
+                Sleeper.sleep(Duration.ofSeconds(2));
                 throw new OvenTimeoutException(req.candles());
             }
-            sleep(150 + req.candles() * millisPerCandle);
+            Sleeper.sleep(Duration.ofMillis(150 + req.candles() * millisPerCandle));
             oven.setStatus(StatusCode.OK);
             // How long the oven *actually* took, not how long we asked it to sleep.
             return timer.elapsed();
@@ -162,6 +176,9 @@ public class Bakery {
     }
 
     public Map<String, Object> restock(String flavor, int amount) {
+        // Same guard as ordering: restocking a flavor we do not serve would create an
+        // inventory row that nothing can ever order.
+        flavors.require(flavor);
         int updated = jdbc.update("UPDATE flavor_inventory SET stock = stock + ? WHERE flavor = ?", amount, flavor);
         if (updated == 0) {
             jdbc.update("INSERT INTO flavor_inventory (flavor, stock) VALUES (?, ?)", flavor, amount);
@@ -176,14 +193,5 @@ public class Bakery {
         if (e instanceof OutOfStockException) return "out_of_stock";
         if (e instanceof OvenTimeoutException) return "oven_timeout";
         return ErrorAttributes.ErrorTypeValues.OTHER;
-    }
-
-    private static void sleep(long millis) {
-        try {
-            Thread.sleep(millis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while baking", e);
-        }
     }
 }

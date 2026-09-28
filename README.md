@@ -64,6 +64,9 @@ A few behaviours are wired in on purpose so there's something to observe:
 - **Lemon starts with only 3 in stock**, while other flavors start with 25. The 4th lemon
   order fails with 503 until you restock.
 - **Invalid guest e-mails bounce** individually without failing the whole party.
+- **Only four flavors are served** (chocolate, vanilla, strawberry, lemon). Anything else is
+  rejected with 400 before any work happens. That is a cardinality guard, not fussiness:
+  `cake.flavor` is a metric attribute, and see [Why unknown flavors are rejected](#why-unknown-flavors-are-rejected).
 
 Keep these in mind, because they're the raw material for the guided exercises later.
 
@@ -319,6 +322,47 @@ In this trace you should see, top to bottom:
 > by `cake.flavor`. Good attributes are *low-cardinality and meaningful*. The demo attaches
 > age and flavor (great for grouping) but keeps the unique `party.id` off of metrics.
 
+### Why unknown flavors are rejected
+
+"Low-cardinality" is easy to say and easy to lose. `cake.flavor` looks like a safe attribute
+— there are only four flavors — but it arrives in the request body, and the only validation
+on it was `@NotBlank`. Nothing stopped a caller ordering a `unicorn` cake, or ten thousand
+differently-named ones.
+
+That matters because **spans and metrics fail differently under high cardinality**:
+
+- On a **span**, an unusual value is harmless and often useful. Spans are sampled, they
+  expire, and when you are debugging one request you want the exact string the caller sent.
+- On a **metric**, every distinct attribute value is a **new time series** that persists and
+  is billed. An unbounded attribute is an unbounded number of series — the failure mode
+  usually called a *cardinality explosion*. It does not take an attacker: a buggy client
+  putting a request ID in the wrong field will do it.
+
+`cake.flavor` is an attribute on five metrics, so it has to be bounded. There are two ways,
+and the choice is worth understanding:
+
+| | Sanitise | Reject |
+|---|---|---|
+| How | Map unrecognised values to `other` before recording | Refuse the request with 400 |
+| Caller sees | A cake they did not order, or a confusing failure | Exactly what was wrong |
+| Cost | Every metric call site must remember to sanitise | One check at the edge |
+
+This demo **rejects**. An unknown flavor gets a 400 with an `unknown_flavor` error, from
+party-service and cake-service alike, before any span starts or any counter moves. The
+attribute is then bounded *by construction*: nothing downstream has to think about it, and
+the raw value is still safe to put on spans.
+
+Two details worth noticing in the code:
+
+- **party-service validates independently** rather than relying on cake-service's 400. It
+  owns the `parties.planned` counter, and an attribute that is only bounded while another
+  service happens to be reachable is not bounded.
+- **4xx, not 5xx.** The request is wrong; nothing is broken. Server spans are not marked as
+  errors for 4xx, so a client hammering bad flavors will not look like an outage.
+
+The served set lives in configuration (`bakery.cake.flavors` and `parties.cake.flavors`), so
+adding a flavor means seeding stock in `data.sql` and listing it in both services.
+
 ---
 
 ## Step 4: Generate some traffic
@@ -354,7 +398,10 @@ them in **Dash0 → Tracing**.
 > you'll see here: **counters** (monotonic totals), **histograms** (value distributions, for
 > latency), and **observable gauges** (a value sampled on an interval).
 
-The demo emits the following, all with low-cardinality attributes only:
+The demo emits the following, all with low-cardinality attributes only. `error.type` is one
+of the few [standard attribute names](https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/)
+that fits this domain, so the code takes its key and its `_OTHER` fallback from the
+`opentelemetry-semconv` library rather than spelling the string out:
 
 | Metric | Type | Where | Attributes |
 |---|---|---|---|
@@ -362,8 +409,8 @@ The demo emits the following, all with low-cardinality attributes only:
 | `parties.stored` | gauge | party-service | (none) |
 | `cakes.baked` | counter | cake-service | `cake.flavor` |
 | `candles.lit` | counter | cake-service | `cake.flavor` |
-| `oven.failures` | counter | cake-service | `cake.flavor`, `failure.reason` |
-| `bake.duration` | histogram | cake-service | `cake.flavor` |
+| `oven.failures` | counter | cake-service | `cake.flavor`, `error.type` |
+| `bake.duration` | histogram | cake-service | `cake.flavor`, `error.type` (failures only) |
 
 Plus **JVM runtime metrics** (heap, GC, threads) contributed automatically by the agent.
 
@@ -411,7 +458,7 @@ Run the app, then try them in order:
 3. **An error: spans record exceptions.** Throw a party for someone turning 95. That's over
    the 80-candle limit, so cake-service returns 504, the `oven` span carries the exception and
    an ERROR status, party-service marks its own span as an error and returns 502, and
-   `oven.failures{failure.reason=oven_timeout}` increments. *Concept: span status, recorded
+   `oven.failures{error.type=oven_timeout}` increments. *Concept: span status, recorded
    exceptions, error metrics.*
 
 4. **A retry: sibling spans in one trace.** Order lemon cakes until the 4th fails (lemon
@@ -514,7 +561,9 @@ demo does and doesn't follow them.
   free.
 
 **Custom, because no convention covers it.** There is no semantic convention for a
-birthday-cake domain, so all of the *business* attributes and metrics are necessarily custom:
+birthday-cake domain, so nearly all of the *business* attributes and metrics are necessarily
+custom. (`error.type` is the exception: failures are classified with the standard key, taken
+from the `opentelemetry-semconv` library rather than typed out as a string.) The custom ones:
 `party.age`, `party.outcome`, `cake.flavor`, `cake.candles`, `invitation.status`,
 `invitation.recipient.domain`, `parties.planned`, `cakes.baked`, `oven.failures`,
 `bake.duration`, and the rest. 
@@ -534,7 +583,7 @@ prefers a `namespace.noun` shape over a pluralized past-tense verb.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | A small web form for throwing a party (thin client over `POST /parties`). |
-| `POST` | `/parties` | Plan a party. Body: `name`, `birthDate` (ISO date), `flavor`, `guests` (array of e-mails). Returns 201 (`PLANNED` or `PARTIAL`) or 502 (`FAILED`) if there's no cake. |
+| `POST` | `/parties` | Plan a party. Body: `name`, `birthDate` (ISO date), `flavor`, `guests` (array of e-mails). Returns 201 (`PLANNED` or `PARTIAL`), 400 if the flavor isn't served, or 502 (`FAILED`) if there's no cake. |
 | `GET` | `/parties` | All parties held in memory |
 | `GET` | `/parties/{id}` | One party |
 
@@ -542,9 +591,9 @@ prefers a `namespace.noun` shape over a pluralized past-tense verb.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/cakes` | Bake a cake (called by party-service). 503 out of stock, 504 oven timeout. |
+| `POST` | `/cakes` | Bake a cake (called by party-service). 400 flavor not served, 503 out of stock, 504 oven timeout. |
 | `GET` | `/inventory` | Flavor stock levels |
-| `POST` | `/inventory/{flavor}/restock?amount=10` | Restock a flavor |
+| `POST` | `/inventory/{flavor}/restock?amount=10` | Restock a flavor. 400 if it isn't one we serve. |
 
 **invitation-service** (`:8082`)
 

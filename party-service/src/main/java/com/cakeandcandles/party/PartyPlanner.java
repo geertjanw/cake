@@ -36,14 +36,16 @@ public class PartyPlanner {
 
     private final CakeClient cakes;
     private final InvitationClient invitations;
+    private final CakeFlavors flavors;
     private final Map<String, Party> parties = new ConcurrentHashMap<>();
 
     private final Tracer tracer = GlobalOpenTelemetry.getTracer("party-service");
     private final LongCounter partiesPlanned;
 
-    public PartyPlanner(CakeClient cakes, InvitationClient invitations) {
+    public PartyPlanner(CakeClient cakes, InvitationClient invitations, CakeFlavors flavors) {
         this.cakes = cakes;
         this.invitations = invitations;
+        this.flavors = flavors;
         Meter meter = GlobalOpenTelemetry.getMeter("party-service");
         this.partiesPlanned = meter.counterBuilder("parties.planned")
                 .setDescription("Parties planned, by outcome").setUnit("{party}").build();
@@ -53,6 +55,10 @@ public class PartyPlanner {
     }
 
     public Party plan(PartyRequest req) {
+        // Before anything is recorded: this is what keeps cake.flavor bounded on
+        // parties.planned. A flavor nobody bakes is a bad request, not a failed party.
+        flavors.require(req.flavor());
+
         String partyId = UUID.randomUUID().toString();
         int age = Period.between(req.birthDate(), LocalDate.now()).getYears();
 

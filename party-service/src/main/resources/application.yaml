@@ -5,6 +5,13 @@ spring:
 server:
   port: 8080
 
+parties:
+  cake:
+    # Must match cake-service's bakery.cake.flavors. Rejected here rather than sanitised,
+    # because cake.flavor is an attribute on parties.planned and every distinct value is a
+    # time series that sticks around.
+    flavors: chocolate,vanilla,strawberry,lemon
+
 clients:
   cake:
     url: ${CAKE_SERVICE_URL:http://localhost:8081}

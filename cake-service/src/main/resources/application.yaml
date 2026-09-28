@@ -16,6 +16,11 @@ server:
   port: 8081
 
 bakery:
+  cake:
+    # The flavors we serve. Anything else is rejected with 400 rather than sanitised,
+    # because cake.flavor is a metric attribute and every distinct value is a time series
+    # that sticks around. Keep in sync with data.sql, which seeds the stock levels.
+    flavors: chocolate,vanilla,strawberry,lemon
   oven:
     max-candles: 80      # anything above this makes the oven time out
     millis-per-candle: 25
