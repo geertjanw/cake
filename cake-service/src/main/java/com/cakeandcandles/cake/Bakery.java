@@ -94,7 +94,6 @@ public class Bakery {
                 .setAttribute(PARTY_ID, req.partyId())
                 .startSpan();
         Stopwatch timer = Stopwatch.start();
-        String errorType = null;
         try (Scope ignored = span.makeCurrent()) {
             reserveFlavor(req.flavor());            // JDBC spans appear under this one
             Duration bakeTime = runOven(req);        // sleeps; the slow bit you see in traces
@@ -112,17 +111,16 @@ public class Bakery {
             span.setStatus(StatusCode.OK);
             return new CakeResponse(cakeId, req.flavor(), req.candles(), bakeTime.toMillis());
         } catch (RuntimeException e) {
-            errorType = reasonOf(e);
             span.recordException(e);
             span.setStatus(StatusCode.ERROR, e.getMessage());
             ovenFailures.add(1, Attributes.of(FLAVOR, req.flavor(),
-                    ErrorAttributes.ERROR_TYPE, errorType));
+                    ErrorAttributes.ERROR_TYPE, reasonOf(e)));
             throw e;
         } finally {
-            Attributes dataPointAttributes = errorType == null
-                    ? Attributes.of(FLAVOR, req.flavor())
-                    : Attributes.of(FLAVOR, req.flavor(), ErrorAttributes.ERROR_TYPE, errorType);
-            bakeDuration.record(timer.elapsedSeconds(), dataPointAttributes);
+            // Recorded for failures too: a bake that died after 2 seconds in the oven is
+            // part of the latency story, and leaving it out makes the histogram flatter
+            // than the service really is. Which failure it was belongs on oven.failures.
+            bakeDuration.record(timer.elapsedSeconds(), Attributes.of(FLAVOR, req.flavor()));
             span.end();
         }
     }

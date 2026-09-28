@@ -410,7 +410,7 @@ that fits this domain, so the code takes its key and its `_OTHER` fallback from 
 | `cakes.baked` | counter | cake-service | `cake.flavor` |
 | `candles.lit` | counter | cake-service | `cake.flavor` |
 | `oven.failures` | counter | cake-service | `cake.flavor`, `error.type` |
-| `bake.duration` | histogram | cake-service | `cake.flavor`, `error.type` (failures only) |
+| `bake.duration` | histogram | cake-service | `cake.flavor` |
 
 Plus **JVM runtime metrics** (heap, GC, threads) contributed automatically by the agent.
 
