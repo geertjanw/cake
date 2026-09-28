@@ -415,7 +415,7 @@ new time series on its own:
 | `cakes.baked` | counter | cake-service | `cake.flavor` |
 | `candles.lit` | counter | cake-service | `cake.flavor` |
 | `oven.failures` | counter | cake-service | `cake.flavor`, `error.type` |
-| `bake.duration` | histogram | cake-service | `cake.flavor` |
+| `bake.duration` | histogram | cake-service | `cake.flavor`, `error.type` (failures only) |
 
 Plus **JVM runtime metrics** (heap, GC, threads) contributed automatically by the agent.
 
