@@ -641,7 +641,7 @@ prefers a `namespace.noun` shape over a pluralized past-tense verb.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | A small web form for throwing a party (thin client over `POST /parties`). |
-| `POST` | `/parties` | Plan a party. Body: `name`, `birthDate` (ISO date), `flavor`, `guests` (array of e-mails). Returns 201 (`PLANNED` or `PARTIAL`), 400 if the flavor isn't served, or 502 (`FAILED`) if there's no cake. |
+| `POST` | `/parties` | Plan a party. Body: `name`, `birthDate` (ISO date), `flavor`, `guests` (array of e-mails). Returns 201 (`PLANNED` or `PARTIAL`), 400 if the flavor isn't served or the bakery refuses the order, or 502 (`FAILED`) if the bakery couldn't produce a cake. |
 | `GET` | `/parties` | All parties held in memory |
 | `GET` | `/parties/{id}` | One party |
 

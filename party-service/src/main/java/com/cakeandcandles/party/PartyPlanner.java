@@ -84,6 +84,17 @@ public class PartyPlanner {
         try {
             cake = cakes.order(partyId, req.flavor(), age);
         } catch (CakeClient.CakeException e) {
+            if (e.errorType() == CakeClient.ErrorType.REJECTED) {
+                // The bakery refused the order itself, so this is a bad request, not a
+                // failed party - handled like an unknown flavor. Deliberately no span
+                // ERROR, no parties.planned increment and no stored party: counting a
+                // caller's mistake as a failed party would inflate the failure rate with
+                // things no amount of fixing the bakery could prevent. It stays visible as
+                // a 400 on the server span, and in the log record below, which carries the
+                // reason the bakery gave.
+                log.warn("Bakery rejected the order for party {}", partyId, e);
+                throw new PartyExceptions.CakeRejectedException(e.getMessage(), e);
+            }
             log.error("No cake for party {}", partyId, e);
             current.setStatus(StatusCode.ERROR, "cake order failed");
             current.recordException(e);
