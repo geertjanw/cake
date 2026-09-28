@@ -463,7 +463,7 @@ becomes an OTLP log record, stamped with the trace and span ID of the request. S
 does the app-side half of `logs/dup` explicitly — `Bakery`, `PartyPlanner`, `InvitationClient`
 and `Mailroom` each *both* record the exception on the span and log it with the throwable.
 Order a cake with 99 candles and the same oven timeout shows up twice: as an `exception`
-event on the `oven` span, and as a correlated log record carrying `exception.type` and
+event on the `bake cake` span, and as a correlated log record carrying `exception.type` and
 `exception.stacktrace`. Compare them and the trade-off is concrete. Span events travel in the
 same payload as their span, so they are always there when you open the trace; log records are
 a separate signal you can filter, search, and retain on their own terms, but they have to be

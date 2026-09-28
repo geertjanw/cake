@@ -164,8 +164,10 @@ public class Bakery {
             // How long the oven *actually* took, not how long we asked it to sleep.
             return timer.elapsed();
         } catch (RuntimeException e) {
-            oven.recordException(e);
-            oven.setStatus(StatusCode.ERROR);
+            // Status, but deliberately no recordException: the same exception is recorded
+            // once, by bake(), where it is actually handled. Semantic conventions recommend
+            // against recording one exception more than once.
+            oven.setStatus(StatusCode.ERROR, e.getMessage());
             throw e;
         } finally {
             oven.end();
