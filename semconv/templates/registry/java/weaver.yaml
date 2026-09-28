@@ -1,0 +1,43 @@
+# Generation config for the Java constants. Both templates filter the resolved registry
+# down to the `cake` namespace: the registry also resolves the upstream OpenTelemetry
+# conventions (that is how `error.type` is referenced), and those already ship as the
+# opentelemetry-semconv artifact - regenerating them here would be duplicating a library.
+params:
+  package: com.cakeandcandles.semconv
+
+text_maps:
+  # semconv type -> the AttributeKey factory method that produces it
+  java_keys:
+    string: stringKey
+    int: longKey
+    double: doubleKey
+    boolean: booleanKey
+    string[]: stringArrayKey
+    int[]: longArrayKey
+    double[]: doubleArrayKey
+    boolean[]: booleanArrayKey
+  # semconv type -> the Java type parameter of that AttributeKey
+  java_types:
+    string: String
+    int: Long
+    double: Double
+    boolean: Boolean
+    string[]: List<String>
+    int[]: List<Long>
+    double[]: List<Double>
+    boolean[]: List<Boolean>
+
+templates:
+  - template: CakeAttributes.java.j2
+    filter: >
+      semconv_attributes
+      | map(select(.name | startswith("cake.")))
+    application_mode: single
+    file_name: CakeAttributes.java
+
+  - template: CakeMetrics.java.j2
+    filter: >
+      semconv_metrics
+      | map(select(.metric_name | startswith("cake.")))
+    application_mode: single
+    file_name: CakeMetrics.java

@@ -19,6 +19,8 @@
   <description>Birthday party ordering system - a Dash0 / OpenTelemetry demo</description>
 
   <modules>
+    <!-- First: the other three depend on the generated constants. -->
+    <module>cake-semconv</module>
     <module>party-service</module>
     <module>cake-service</module>
     <module>invitation-service</module>

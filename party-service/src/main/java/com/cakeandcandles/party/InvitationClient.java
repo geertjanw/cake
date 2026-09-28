@@ -1,5 +1,7 @@
 package com.cakeandcandles.party;
 
+import com.cakeandcandles.semconv.CakeAttributes;
+import com.cakeandcandles.semconv.CakeAttributes.CakeInvitationsDispatchValues;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
@@ -22,8 +24,8 @@ public class InvitationClient {
 
     private static final Logger log = LoggerFactory.getLogger(InvitationClient.class);
 
-    private static final AttributeKey<String> DISPATCH = AttributeKey.stringKey("invitations.dispatch");
-    private static final AttributeKey<Long> GUEST_COUNT = AttributeKey.longKey("party.guest_count");
+    private static final AttributeKey<String> DISPATCH = CakeAttributes.CAKE_INVITATIONS_DISPATCH;
+    private static final AttributeKey<Long> GUEST_COUNT = CakeAttributes.CAKE_PARTY_GUEST_COUNT;
 
     /**
      * How the invitation round went, as opposed to how many letters landed.
@@ -35,11 +37,25 @@ public class InvitationClient {
      */
     public enum Dispatch {
         /** Every invitation was accepted. */
-        DELIVERED,
+        DELIVERED(CakeInvitationsDispatchValues.DELIVERED),
         /** invitation-service answered; some addresses bounced. */
-        PARTIAL,
+        PARTIAL(CakeInvitationsDispatchValues.PARTIAL),
         /** invitation-service could not be reached, or failed outright. Nobody was invited. */
-        UNAVAILABLE
+        UNAVAILABLE(CakeInvitationsDispatchValues.UNAVAILABLE);
+
+        private final String value;
+
+        Dispatch(String value) {
+            this.value = value;
+        }
+
+        /**
+         * The value to record as {@code cake.invitations.dispatch}, taken from the registry
+         * rather than from name(): the constant is free to be renamed, the wire value is not.
+         */
+        public String value() {
+            return value;
+        }
     }
 
     /**
@@ -101,7 +117,7 @@ public class InvitationClient {
             }
 
             Dispatch dispatch = response.failed() == 0 ? Dispatch.DELIVERED : Dispatch.PARTIAL;
-            Span.current().setAttribute(DISPATCH, dispatch.name());
+            Span.current().setAttribute(DISPATCH, dispatch.value());
             return new Result(dispatch, null, response.sent(), response.failed(), response.failedGuests());
         } catch (RestClientException e) {
             // Invitations are best-effort, so the party still happens - but "best-effort"
@@ -114,7 +130,7 @@ public class InvitationClient {
 
     private Result unavailable(List<String> guests, ErrorType errorType, RestClientException cause) {
         Span span = Span.current();
-        span.setAttribute(DISPATCH, Dispatch.UNAVAILABLE.name());
+        span.setAttribute(DISPATCH, Dispatch.UNAVAILABLE.value());
         span.setAttribute(ErrorAttributes.ERROR_TYPE, errorType.value());
         if (cause != null) {
             span.recordException(cause);

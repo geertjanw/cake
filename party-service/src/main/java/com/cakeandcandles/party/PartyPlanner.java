@@ -1,5 +1,8 @@
 package com.cakeandcandles.party;
 
+import com.cakeandcandles.semconv.CakeAttributes;
+import com.cakeandcandles.semconv.CakeAttributes.CakePartyOutcomeValues;
+import com.cakeandcandles.semconv.CakeMetrics;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -32,9 +35,9 @@ public class PartyPlanner {
 
     private static final Logger log = LoggerFactory.getLogger(PartyPlanner.class);
 
-    private static final AttributeKey<String> OUTCOME = AttributeKey.stringKey("party.outcome");
-    private static final AttributeKey<String> FLAVOR = AttributeKey.stringKey("cake.flavor");
-    private static final AttributeKey<String> DISPATCH = AttributeKey.stringKey("invitations.dispatch");
+    private static final AttributeKey<String> OUTCOME = CakeAttributes.CAKE_PARTY_OUTCOME;
+    private static final AttributeKey<String> FLAVOR = CakeAttributes.CAKE_FLAVOR;
+    private static final AttributeKey<String> DISPATCH = CakeAttributes.CAKE_INVITATIONS_DISPATCH;
 
     private final CakeClient cakes;
     private final InvitationClient invitations;
@@ -50,13 +53,9 @@ public class PartyPlanner {
         this.invitations = invitations;
         this.flavors = flavors;
         Meter meter = GlobalOpenTelemetry.getMeter("party-service");
-        this.partiesPlanned = meter.counterBuilder("parties.planned")
-                .setDescription("Parties planned, by outcome").setUnit("{party}").build();
-        this.invitationDispatches = meter.counterBuilder("invitations.dispatch")
-                .setDescription("Invitation rounds, by whether invitation-service handled them")
-                .setUnit("{dispatch}").build();
-        meter.gaugeBuilder("parties.stored").ofLongs()
-                .setDescription("Parties currently held in memory")
+        this.partiesPlanned = CakeMetrics.createCakePartiesPlanned(meter);
+        this.invitationDispatches = CakeMetrics.createCakeInvitationsDispatches(meter);
+        CakeMetrics.createCakePartiesStored(meter)
                 .buildWithCallback(m -> m.record(parties.size()));
     }
 
@@ -71,10 +70,10 @@ public class PartyPlanner {
         // Enrich the agent's HTTP server span with business attributes. Age is a great
         // attribute to filter and group by in Dash0 - low cardinality, meaningful.
         Span current = Span.current();
-        current.setAttribute("party.id", partyId);
-        current.setAttribute("party.age", age);
+        current.setAttribute(CakeAttributes.CAKE_PARTY_ID, partyId);
+        current.setAttribute(CakeAttributes.CAKE_PARTY_AGE, (long) age);
         current.setAttribute(FLAVOR, req.flavor());
-        current.setAttribute("party.guest_count", req.guests().size());
+        current.setAttribute(CakeAttributes.CAKE_PARTY_GUEST_COUNT, (long) req.guests().size());
 
         log.info("Planning {}'s {}th birthday (party {}) with {} guests and a {} cake",
                 req.name(), age, partyId, req.guests().size(), req.flavor());
@@ -104,7 +103,7 @@ public class PartyPlanner {
             // span, because the agent owns error.type there: its HTTP instrumentation
             // overwrites the key at span end with the status code for any 5xx.
             partiesPlanned.add(1, Attributes.of(
-                    OUTCOME, "failed",
+                    OUTCOME, CakePartyOutcomeValues.FAILED,
                     FLAVOR, req.flavor(),
                     ErrorAttributes.ERROR_TYPE, e.errorType().value()));
             return store(new Party(partyId, req.name(), req.birthDate(), age, req.flavor(), req.guests(),
@@ -121,12 +120,12 @@ public class PartyPlanner {
         // is indistinguishable from guests mistyping their addresses - both are "partial".
         // error.type only when there is an error to type, and only ever one of
         // InvitationClient.ErrorType - which is what makes putting it on a metric safe.
-        String dispatch = inv.dispatch().name().toLowerCase();
+        String dispatch = inv.dispatch().value();
         invitationDispatches.add(1, inv.errorType() == null
                 ? Attributes.of(DISPATCH, dispatch)
                 : Attributes.of(DISPATCH, dispatch,
                         ErrorAttributes.ERROR_TYPE, inv.errorType().value()));
-        partiesPlanned.add(1, Attributes.of(OUTCOME, status.name().toLowerCase(), FLAVOR, req.flavor()));
+        partiesPlanned.add(1, Attributes.of(OUTCOME, outcomeOf(status), FLAVOR, req.flavor()));
 
         // Only set when nobody could be invited, so the API response says why the party is
         // PARTIAL rather than leaving the caller to guess.
@@ -135,9 +134,9 @@ public class PartyPlanner {
                 : null;
 
         current.addEvent("party planned", Attributes.of(
-                AttributeKey.stringKey("party.status"), status.name(),
-                DISPATCH, inv.dispatch().name(),
-                AttributeKey.longKey("invitations.failed"), (long) inv.failed()));
+                OUTCOME, outcomeOf(status),
+                DISPATCH, inv.dispatch().value(),
+                CakeAttributes.CAKE_INVITATIONS_FAILED, (long) inv.failed()));
 
         return store(new Party(partyId, req.name(), req.birthDate(), age, req.flavor(), req.guests(),
                 status, cake.cakeId(), inv.sent(), inv.failed(), failureReason, Instant.now()));
@@ -146,7 +145,7 @@ public class PartyPlanner {
     /** Used by the scheduled job: a span that is NOT rooted in an HTTP request. */
     public int countUpcomingBirthdays(int withinDays) {
         Span span = tracer.spanBuilder("count upcoming birthdays")
-                .setAttribute("lookahead.days", withinDays)
+                .setAttribute(CakeAttributes.CAKE_BIRTHDAYS_LOOKAHEAD_DAYS, (long) withinDays)
                 .startSpan();
         try (Scope ignored = span.makeCurrent()) {
             LocalDate today = LocalDate.now();
@@ -157,7 +156,7 @@ public class PartyPlanner {
                         return !next.isAfter(today.plusDays(withinDays));
                     })
                     .count();
-            span.setAttribute("birthdays.upcoming", count);
+            span.setAttribute(CakeAttributes.CAKE_BIRTHDAYS_UPCOMING, count);
             return (int) count;
         } finally {
             span.end();
@@ -167,6 +166,19 @@ public class PartyPlanner {
     public Collection<Party> all() { return parties.values(); }
 
     public Optional<Party> find(String id) { return Optional.ofNullable(parties.get(id)); }
+
+    /**
+     * The registry decides what cake.party.outcome may say, so the mapping is explicit
+     * rather than status.name().toLowerCase(): a new Party.Status would then be a compile
+     * error here instead of a new time series on cake.parties.planned.
+     */
+    private static String outcomeOf(Party.Status status) {
+        return switch (status) {
+            case PLANNED -> CakePartyOutcomeValues.PLANNED;
+            case PARTIAL -> CakePartyOutcomeValues.PARTIAL;
+            case FAILED -> CakePartyOutcomeValues.FAILED;
+        };
+    }
 
     private Party store(Party p) {
         parties.put(p.id(), p);

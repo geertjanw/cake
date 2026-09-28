@@ -75,6 +75,8 @@ Keep these in mind, because they're the raw material for the guided exercises la
 ## Prerequisites
 
 - **Docker** with Compose (the easy path), *or* **Java 21 + Maven 3.9** to run locally.
+  Maven builds also shell out to Docker once, to generate the demo's own semantic
+  conventions with [Weaver](#a-registry-of-our-own-with-weaver).
 - A **Dash0 account**, which is where your telemetry lands.
 
 ### Step 0: Get a Dash0 account and credentials
@@ -316,11 +318,11 @@ In this trace you should see, top to bottom:
 > same trace instead of starting a new one. You get this for free from the agent, and it's why
 > distributed traces "just work."
 
-> **Concept: attributes.** Notice `party.age`, `cake.flavor`, `cake.candles`, and
-> `party.guest_count` on the spans. **Attributes** are key/value metadata that make a span
-> searchable and groupable. In Dash0 you can now filter traces by `party.age > 70` or group
+> **Concept: attributes.** Notice `cake.party.age`, `cake.flavor`, `cake.candles`, and
+> `cake.party.guest_count` on the spans. **Attributes** are key/value metadata that make a span
+> searchable and groupable. In Dash0 you can now filter traces by `cake.party.age > 70` or group
 > by `cake.flavor`. Good attributes are *low-cardinality and meaningful*. The demo attaches
-> age and flavor (great for grouping) but keeps the unique `party.id` off of metrics.
+> age and flavor (great for grouping) but keeps the unique `cake.party.id` off of metrics.
 
 ### Why unknown flavors are rejected
 
@@ -355,7 +357,7 @@ the raw value is still safe to put on spans.
 Two details worth noticing in the code:
 
 - **party-service validates independently** rather than relying on cake-service's 400. It
-  owns the `parties.planned` counter, and an attribute that is only bounded while another
+  owns the `cake.parties.planned` counter, and an attribute that is only bounded while another
   service happens to be reachable is not bounded.
 - **4xx, not 5xx.** The request is wrong; nothing is broken. Server spans are not marked as
   errors for 4xx, so a client hammering bad flavors will not look like an outage.
@@ -409,18 +411,19 @@ new time series on its own:
 
 | Metric | Type | Where | Attributes |
 |---|---|---|---|
-| `parties.planned` | counter | party-service | `party.outcome`, `cake.flavor`, `error.type` (failures only) |
-| `invitations.dispatch` | counter | party-service | `invitations.dispatch`, `error.type` (failures only) |
-| `parties.stored` | gauge | party-service | (none) |
-| `cakes.baked` | counter | cake-service | `cake.flavor` |
-| `candles.lit` | counter | cake-service | `cake.flavor` |
-| `oven.failures` | counter | cake-service | `cake.flavor`, `error.type` |
-| `bake.duration` | histogram | cake-service | `cake.flavor`, `error.type` (failures only) |
+| `cake.parties.planned` | counter | party-service | `cake.party.outcome`, `cake.flavor`, `error.type` (failures only) |
+| `cake.invitations.dispatches` | counter | party-service | `cake.invitations.dispatch`, `error.type` (failures only) |
+| `cake.parties.stored` | gauge | party-service | (none) |
+| `cake.bakes` | counter | cake-service | `cake.flavor` |
+| `cake.candles.lit` | counter | cake-service | `cake.flavor` |
+| `cake.oven.failures` | counter | cake-service | `cake.flavor`, `error.type` |
+| `cake.bake.duration` | histogram | cake-service | `cake.flavor`, `error.type` (failures only) |
+| `cake.invitations.sent` | counter | invitation-service | `cake.invitation.status` |
 
 Plus **JVM runtime metrics** (heap, GC, threads) contributed automatically by the agent.
 
-Open **Dash0 → Metrics** and try charting `bake.duration` (p95) grouped by `cake.flavor`, or
-`parties.planned` grouped by `party.outcome`. These are the building blocks of dashboards and
+Open **Dash0 → Metrics** and try charting `cake.bake.duration` (p95) grouped by `cake.flavor`, or
+`cake.parties.planned` grouped by `cake.party.outcome`. These are the building blocks of dashboards and
 alerts.
 
 ### Logs
@@ -515,13 +518,13 @@ Run the app, then try them in order:
    curl -s -X POST localhost:8080/parties -H 'Content-Type: application/json' \
      -d '{"name":"Grace","birthDate":"1951-03-01","flavor":"vanilla","guests":["a@example.com"]}' | jq
    ```
-   Compare `bake.duration` grouped by `cake.flavor`, or plot request latency against
-   `party.age`. *Concept: histograms, attribute-based grouping.*
+   Compare `cake.bake.duration` grouped by `cake.flavor`, or plot request latency against
+   `cake.party.age`. *Concept: histograms, attribute-based grouping.*
 
 3. **An error: spans record exceptions.** Throw a party for someone turning 95. That's over
    the 80-candle limit, so cake-service returns 504, the `oven` span carries the exception and
    an ERROR status, party-service marks its own span as an error and returns 502, and
-   `oven.failures{error.type=oven_timeout}` increments. *Concept: span status, recorded
+   `cake.oven.failures{error.type=oven_timeout}` increments. *Concept: span status, recorded
    exceptions, error metrics.*
 
 4. **A retry: sibling spans in one trace.** Order lemon cakes until the 4th fails (lemon
@@ -535,7 +538,7 @@ Run the app, then try them in order:
 
 5. **A partial failure: filter by attribute.** Include `"not-an-email"` in the guest list.
    The request returns 201 with status `PARTIAL`, and inside the trace exactly one `send
-   invitation` span is red. Filter for `invitation.status = failed`.
+   invitation` span is red. Filter for `cake.invitation.status = failed`.
    ```bash
    curl -s -X POST localhost:8080/parties -H 'Content-Type: application/json' \
      -d '{"name":"Linus","birthDate":"2000-06-15","flavor":"chocolate","guests":["ok@example.com","not-an-email"]}' | jq
@@ -552,7 +555,7 @@ Run the app, then try them in order:
    instrumentation.*
 
 8. **Build a dashboard or alert.** Combine what you've collected: parties by outcome, cakes by
-   flavor, p95 of `bake.duration`, error rate on `POST /cakes`, JVM heap per service. *Concept:
+   flavor, p95 of `cake.bake.duration`, error rate on `POST /cakes`, JVM heap per service. *Concept:
    turning metrics into dashboards and alerts in Dash0.*
 
 ---
@@ -586,7 +589,7 @@ The agent supplies the real implementation at runtime. With that, the code adds 
 can't know about your domain:
 
 - **Business attributes** on the agent's server span:
-  `Span.current().setAttribute("party.age", age)`
+  `Span.current().setAttribute(CakeAttributes.CAKE_PARTY_AGE, age)`
 - **Custom child spans** for steps that matter: `bake cake`, `oven`, `send invitation`,
   `count upcoming birthdays`
 - **Span events** for notable moments: `flavor reserved`, `ordering cake, attempt 2`
@@ -627,15 +630,74 @@ demo does and doesn't follow them.
 birthday-cake domain, so nearly all of the *business* attributes and metrics are necessarily
 custom. (`error.type` is the exception: failures are classified with the standard key, taken
 from the `opentelemetry-semconv` library rather than typed out as a string.) The custom ones:
-`party.age`, `party.outcome`, `cake.flavor`, `cake.candles`, `invitation.status`,
-`invitation.recipient.domain`, `parties.planned`, `cakes.baked`, `oven.failures`,
-`bake.duration`, and the rest. 
+`cake.party.age`, `cake.party.outcome`, `cake.flavor`, `cake.candles`, `cake.invitation.status`,
+`cake.invitation.recipient.domain`, `cake.parties.planned`, `cake.bakes`, `cake.oven.failures`,
+`cake.bake.duration`, and the rest.
+- They all sit under one root namespace, `cake`. One prefix separates "telemetry this app
+chose to emit" from everything the agent contributes, in a filter, a dashboard, or a bill.
 - They follow the convention *style* (dotted namespaces, low
-cardinality, and PII kept off spans, which is why only `invitation.recipient.domain` is
+cardinality, and PII kept off spans, which is why only `cake.invitation.recipient.domain` is
 recorded, never the full address) but they are not standardized names.
-- A couple of the metric
-names (`cakes.baked`, `candles.lit`) also bend OpenTelemetry's metric-naming guidance, which
-prefers a `namespace.noun` shape over a pluralized past-tense verb.
+- Being custom does not mean being undefined, though - which is what the next section is about.
+
+### A registry of our own, with Weaver
+
+Custom names still need a source of truth, or they drift: a typo becomes a second time
+series, a rename silently breaks a dashboard, and the only documentation is whatever the
+call sites happen to say today. OpenTelemetry's answer is
+[Weaver](https://github.com/open-telemetry/weaver), the same tool the project uses to
+maintain the official semantic conventions - and it works just as well on a registry of
+your own.
+
+The model lives in [`semconv/registry`](semconv/registry): `attributes.yaml` and
+`metrics.yaml` define every name, type, unit, enum value and brief, and `manifest.yaml`
+declares a dependency on the upstream OpenTelemetry registry so that `error.type` can be
+*referenced* rather than redefined. From it, Weaver renders Java constants through the
+templates in [`semconv/templates`](semconv/templates).
+
+**Generation is part of the build**, not a step somebody has to remember. The
+[`cake-semconv`](cake-semconv) module runs `weaver registry check` in `validate` and
+`weaver registry generate` in `generate-sources`, both through the `otel/weaver` Docker
+image, and adds the output as a source root:
+
+```bash
+mvn -pl cake-semconv generate-sources   # or just `mvn package`, which does it anyway
+```
+
+The generated code lands in `cake-semconv/target/generated-sources/weaver`, which is where
+Maven expects build-time generated code to go - so it is never committed, and it cannot
+drift from the model. (`docker build` cannot nest Docker, so the `Dockerfile` runs Weaver in
+a stage of its own and then builds with `-Dweaver.skip=true`.)
+
+An invalid model fails the build before any Java exists:
+
+```
+× The `id` property is required in `metric.cake.bakes`
+```
+
+The services use the result rather than string literals:
+
+```java
+span.setAttribute(CakeAttributes.CAKE_FLAVOR, flavor);      // not "cake.flavor"
+this.bakeDuration = CakeMetrics.createCakeBakeDuration(meter);  // name, unit and description
+                                                               // all come from the model
+```
+
+What that buys, concretely:
+
+- **Renaming is a compile error**, not a silent change in what a dashboard matches.
+- **A metric's unit and description cannot drift** from its definition, because the service
+  never writes them - it asks for the instrument.
+- **Enum attributes generate their values** (`CakePartyOutcomeValues.PLANNED`,
+  `CakeInvitationsDispatchValues.UNAVAILABLE`), so a call site cannot invent a new one. That
+  is the cardinality guard from [Why unknown flavors are rejected](#why-unknown-flavors-are-rejected)
+  again, enforced by the compiler this time.
+- **The model is documentation** that cannot go stale: `cake.party.id` is marked as
+  spans-only, and the reason is written next to the definition rather than in a comment
+  three files away.
+
+Weaver can also render Markdown docs from the same model, or check live telemetry against
+it (`weaver registry live-check`) - the natural next step once a schema exists.
 
 ---
 

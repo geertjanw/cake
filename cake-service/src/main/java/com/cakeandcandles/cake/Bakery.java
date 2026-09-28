@@ -4,6 +4,8 @@ import com.cakeandcandles.cake.BakeryExceptions.OutOfStockException;
 import com.cakeandcandles.cake.BakeryExceptions.OvenTimeoutException;
 import com.cakeandcandles.time.Sleeper;
 import com.cakeandcandles.time.Stopwatch;
+import com.cakeandcandles.semconv.CakeAttributes;
+import com.cakeandcandles.semconv.CakeMetrics;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -39,12 +41,12 @@ public class Bakery {
 
     private static final Logger log = LoggerFactory.getLogger(Bakery.class);
 
-    // Attribute keys reused across spans and metrics. Candles is a small integer, and
-    // flavor is bounded by CakeFlavors before it reaches a metric. Never put partyId on
-    // a metric: it is unique per request, so every party would be its own time series.
-    static final AttributeKey<String> FLAVOR = AttributeKey.stringKey("cake.flavor");
-    static final AttributeKey<Long> CANDLES = AttributeKey.longKey("cake.candles");
-    static final AttributeKey<String> PARTY_ID = AttributeKey.stringKey("party.id");
+    // Attribute keys come from the generated CakeAttributes, so a name lives in the
+    // registry and nowhere else. Which attribute may go on a metric is settled there too:
+    // cake.party.id is documented as spans-only, being unique per request.
+    private static final AttributeKey<String> FLAVOR = CakeAttributes.CAKE_FLAVOR;
+    private static final AttributeKey<Long> CANDLES = CakeAttributes.CAKE_CANDLES;
+    private static final AttributeKey<String> PARTY_ID = CakeAttributes.CAKE_PARTY_ID;
 
     private final JdbcClient jdbc;
     private final CakeFlavors flavors;
@@ -68,15 +70,12 @@ public class Bakery {
 
         this.tracer = GlobalOpenTelemetry.getTracer("cake-service");
         Meter meter = GlobalOpenTelemetry.getMeter("cake-service");
-        this.cakesBaked = meter.counterBuilder("cakes.baked")
-                .setDescription("Number of cakes successfully baked").setUnit("{cake}").build();
-        this.candlesLit = meter.counterBuilder("candles.lit")
-                .setDescription("Total candles placed on cakes").setUnit("{candle}").build();
-        this.ovenFailures = meter.counterBuilder("oven.failures")
-                .setDescription("Bakes that failed").setUnit("{failure}").build();
-        this.bakeDuration = meter.histogramBuilder("bake.duration")
-                .setDescription("Measured wall-clock time of a bake")
-                .setUnit("s").build();
+        // Name, description and unit all come from the registry: the service asks for the
+        // instrument, it does not get to say what the instrument is called.
+        this.cakesBaked = CakeMetrics.createCakeBakes(meter);
+        this.candlesLit = CakeMetrics.createCakeCandlesLit(meter);
+        this.ovenFailures = CakeMetrics.createCakeOvenFailures(meter);
+        this.bakeDuration = CakeMetrics.createCakeBakeDuration(meter);
     }
 
     @Transactional
@@ -99,7 +98,7 @@ public class Bakery {
             reserveFlavor(req.flavor());            // JDBC spans appear under this one
             Duration bakeTime = runOven(req);        // sleeps; the slow bit you see in traces
             String cakeId = UUID.randomUUID().toString();
-            span.setAttribute("cake.id", cakeId);
+            span.setAttribute(CakeAttributes.CAKE_ID, cakeId);
 
             Attributes attrs = Attributes.of(FLAVOR, req.flavor());
             cakesBaked.add(1, attrs);
@@ -154,7 +153,7 @@ public class Bakery {
                 .param("flavor", flavor)
                 .update();
         Span.current().addEvent("flavor reserved",
-                Attributes.of(FLAVOR, flavor, AttributeKey.longKey("inventory.remaining"), (long) remaining - 1));
+                Attributes.of(FLAVOR, flavor, CakeAttributes.CAKE_INVENTORY_REMAINING, (long) remaining - 1));
     }
 
     private Duration runOven(CakeRequest req) {
