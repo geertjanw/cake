@@ -73,7 +73,7 @@ public class Mailroom {
             span.setAttribute(STATUS, "sent");
             return true;
         } catch (IllegalArgumentException e) {
-            log.warn("Could not invite guest for party {}: {}", req.partyId(), e.getMessage());
+            log.warn("Could not invite guest for party {}", req.partyId(), e);
             span.recordException(e);
             span.setStatus(StatusCode.ERROR, e.getMessage());
             span.setAttribute(STATUS, "failed");

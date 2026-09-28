@@ -23,6 +23,8 @@ export OTEL_RESOURCE_ATTRIBUTES="deployment.environment.name=${DEPLOYMENT_ENV:-l
 export OTEL_LOGS_EXPORTER=otlp OTEL_METRICS_EXPORTER=otlp OTEL_TRACES_EXPORTER=otlp
 export OTEL_METRIC_EXPORT_INTERVAL=15000
 export OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_EMIT_EXPERIMENTAL_TELEMETRY=true
+# Exceptions as log records as well as span events ("logs" for log records only).
+export OTEL_SEMCONV_EXCEPTION_SIGNAL_PREVIEW=logs/dup
 
 pids=()
 for svc in cake-service invitation-service party-service; do

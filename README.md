@@ -429,6 +429,64 @@ In **Dash0 → Logs** (or from a span, follow the link to its logs) you'll see l
 `Planning Ada's 30th birthday...`, `Baked a chocolate cake...`, and `sent 2 invitations, 1
 failed`, all lining up under the same trace.
 
+### Exceptions: span events, or log records?
+
+Historically, a failure was recorded on the span itself with `span.recordException(e)`, which
+adds a **span event** named `exception`. OpenTelemetry is moving away from that: the Span
+Events API (`addEvent`, `recordException`) is being deprecated in favour of emitting
+**log records** through the Logs API, and the semantic conventions for
+[exceptions in logs](https://opentelemetry.io/docs/specs/semconv/exceptions/exceptions-logs/)
+are already stable.
+
+The demo opts in, in `docker-compose.yaml`, `k8s/otel-shared.yaml` and `scripts/run-local.sh`:
+
+```bash
+OTEL_SEMCONV_EXCEPTION_SIGNAL_PREVIEW=logs/dup
+```
+
+| Value | Effect |
+|---|---|
+| *(unset)* | Span events only — the historical behaviour |
+| `logs/dup` | **Both**, for a phased migration. What this demo uses. |
+| `logs` | Log records only |
+
+**But notice what that setting does not do.** It governs the exceptions the *agent* records
+for you — HTTP, JDBC, and the rest. It has no effect on `span.recordException(e)` written by
+hand, because that is a direct API call, not something the agent mediates. In this demo
+every recorded exception is a hand-written one, so flipping the variable on its own changes
+nothing you can observe. It is set here for the instrumentation the agent contributes, and
+so the migration is already configured when the app's own calls follow.
+
+For your own code the equivalent move is to emit the failure through the Logs API, and with
+the agent attached the shortest path to that is the logger you already have: an SLF4J call
+becomes an OTLP log record, stamped with the trace and span ID of the request. So the demo
+does the app-side half of `logs/dup` explicitly — `Bakery`, `PartyPlanner`, `InvitationClient`
+and `Mailroom` each *both* record the exception on the span and log it with the throwable.
+Order a cake with 99 candles and the same oven timeout shows up twice: as an `exception`
+event on the `oven` span, and as a correlated log record carrying `exception.type` and
+`exception.stacktrace`. Compare them and the trade-off is concrete. Span events travel in the
+same payload as their span, so they are always there when you open the trace; log records are
+a separate signal you can filter, search, and retain on their own terms, but they have to be
+correlated back by trace and span ID.
+
+To go log-only, drop the `span.recordException(...)` calls and set the variable to `logs`.
+
+> **Careful with your own logging.** The agent turns SLF4J calls into OTLP log records, and
+> an exception only becomes `exception.type` / `exception.message` / `exception.stacktrace`
+> on that record if you pass it as the **trailing argument**:
+>
+> ```java
+> log.error("No cake for party {}: {}", partyId, e.getMessage());  // just a string
+> log.error("No cake for party {}", partyId, e);                   // a real exception
+> ```
+>
+> The first form looks fine in a console and is nearly useless in a backend. Once exceptions
+> move to log records, it is the difference between having the failure and losing it.
+
+> **Note on the property name.** The specification calls for
+> `OTEL_SEMCONV_EXCEPTION_SIGNAL_OPT_IN`; the Java agent currently ships it as
+> `OTEL_SEMCONV_EXCEPTION_SIGNAL_PREVIEW`. Expect this to change as it stabilises.
+
 ---
 
 ## Guided exercises

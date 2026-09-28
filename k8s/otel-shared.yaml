@@ -18,3 +18,6 @@ data:
   OTEL_TRACES_EXPORTER: "otlp"
   OTEL_METRIC_EXPORT_INTERVAL: "15000"
   OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_EMIT_EXPERIMENTAL_TELEMETRY: "true"
+  # Exceptions as log records rather than span events
+  # "logs/dup" emits both; "logs" emits only the log records.
+  OTEL_SEMCONV_EXCEPTION_SIGNAL_PREVIEW: "logs/dup"

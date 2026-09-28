@@ -84,7 +84,7 @@ public class PartyPlanner {
         try {
             cake = cakes.order(partyId, req.flavor(), age);
         } catch (CakeClient.CakeException e) {
-            log.error("No cake for party {}: {}", partyId, e.getMessage());
+            log.error("No cake for party {}", partyId, e);
             current.setStatus(StatusCode.ERROR, "cake order failed");
             current.recordException(e);
             // Why it failed, not just that it did: out_of_stock, oven_timeout and

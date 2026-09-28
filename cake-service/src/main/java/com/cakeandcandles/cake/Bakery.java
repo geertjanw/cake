@@ -111,6 +111,9 @@ public class Bakery {
             span.setStatus(StatusCode.OK);
             return new CakeResponse(cakeId, req.flavor(), req.candles(), bakeTime.toMillis());
         } catch (RuntimeException e) {
+            // Both failure modes here are expected business outcomes, not faults.
+            log.warn("Bake failed for party {} ({} cake, {} candles)",
+                    req.partyId(), req.flavor(), req.candles(), e);
             span.recordException(e);
             span.setStatus(StatusCode.ERROR, e.getMessage());
             ovenFailures.add(1, Attributes.of(FLAVOR, req.flavor(),
